@@ -1,0 +1,290 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-information: var(--information);
+  --color-information-foreground: var(--information-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-low-text: var(--low-text);
+  --color-mute-text: var(--mute-text);
+  --color-disabled-text: var(--disabled-text);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+ 
+}
+
+:root {
+ 
+  --background: oklch(100.0% 0.000 89.9);
+  --foreground: oklch(12.9% 0.031 257.9);
+  --card: oklch(100.0% 0.000 89.9);
+  --card-foreground: oklch(12.9% 0.031 257.9);
+  --popover: oklch(100.0% 0.000 89.9);
+  --popover-foreground: oklch(12.9% 0.031 257.9);
+  --primary: oklch(54.6% 0.215 262.7);
+  --primary-foreground: oklch(98.4% 0.003 247.9);
+  --secondary: oklch(96.8% 0.007 247.9);
+  --secondary-foreground: oklch(20.7% 0.038 265.1);
+  --muted: oklch(96.8% 0.007 247.9);
+  --muted-foreground: oklch(54.8% 0.039 257.9);
+  --accent: oklch(96.8% 0.007 247.9);
+  --accent-foreground: oklch(20.7% 0.038 265.1);
+  --destructive: oklch(63.6% 0.209 25.4);
+  --destructive-foreground: oklch(12.9% 0.031 257.9);
+  --information: oklch(54.6% 0.215 262.7);
+  --information-foreground: oklch(98.4% 0.003 247.9);
+  --warning: oklch(76.8% 0.164 70.1);
+  --warning-foreground: oklch(12.9% 0.031 257.9);
+  --success: oklch(52.7% 0.154 150.1);
+  --success-foreground: oklch(98.4% 0.003 247.9);
+  --low-text: oklch(45% 0.03 257.9);
+  --mute-text: oklch(54.8% 0.039 257.9);
+  --disabled-text: oklch(70% 0.02 257.9);
+  --border: oklch(92.6% 0.013 255.5);
+  --input: oklch(92.6% 0.013 255.5);
+  --ring: oklch(54.6% 0.245 262.881);
+  --radius: 0.625rem;
+}
+
+
+
+.dark {
+  --background: oklch(12.9% 0.031 257.9);
+  --foreground: oklch(98.4% 0.003 247.9);
+  --card: oklch(12.9% 0.031 257.9);
+  --card-foreground: oklch(98.4% 0.003 247.9);
+  --popover: oklch(12.9% 0.031 257.9);
+  --popover-foreground: oklch(98.4% 0.003 247.9);
+  --primary: oklch(61.8% 0.191 259.7);
+  --primary-foreground: oklch(98.4% 0.003 247.9);
+  --secondary: oklch(27.5% 0.035 258.9);
+  --secondary-foreground: oklch(98.4% 0.003 247.9);
+  --muted: oklch(27.5% 0.035 258.9);
+  --muted-foreground: oklch(98.4% 0.003 247.9);
+  --accent: oklch(27.5% 0.035 258.9);
+  --accent-foreground: oklch(98.4% 0.003 247.9);
+  --destructive: oklch(39.0% 0.130 25.6);
+  --destructive-foreground: oklch(98.4% 0.003 247.9);
+  --information: oklch(61.8% 0.191 259.7);
+  --information-foreground: oklch(98.4% 0.003 247.9);
+  --warning: oklch(76.8% 0.164 70.1);
+  --warning-foreground: oklch(12.9% 0.031 257.9);
+  --success: oklch(62.7% 0.17 149.2);
+  --success-foreground: oklch(96.8% 0.04 156.7);
+  --low-text: oklch(65% 0.02 260);
+  --mute-text: oklch(54.8% 0.039 257.9);
+  --disabled-text: oklch(45% 0.02 260);
+  --border: oklch(27.5% 0.035 258.9);
+  --input: oklch(27.5% 0.035 258.9);
+  --ring: oklch(48.9% 0.215 264.2);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    scrollbar-gutter: stable;
+  }
+  body {
+    @apply bg-background text-foreground;
+    scrollbar-gutter: stable;
+    overflow: hidden;
+  }
+
+  /* 可操作元素使用手型光标 */
+  button:not(:disabled):not([aria-disabled="true"]),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="switch"]:not([aria-disabled="true"]),
+  [role="checkbox"]:not([aria-disabled="true"]),
+  [role="radio"]:not([aria-disabled="true"]),
+  [role="tab"]:not([aria-disabled="true"]),
+  [role="menuitem"],
+  [role="menuitemcheckbox"],
+  [role="menuitemradio"],
+  [role="option"],
+  [role="combobox"]:not([aria-disabled="true"]),
+  [role="slider"]:not([aria-disabled="true"]),
+  [role="link"],
+  a[href],
+  label[for],
+  label:has(input:not(:disabled)),
+  label:has(button:not(:disabled)),
+  label:has([role="checkbox"]),
+  label:has([role="radio"]),
+  label:has([role="switch"]),
+  summary,
+  select:not(:disabled),
+  input[type="button"]:not(:disabled),
+  input[type="submit"]:not(:disabled),
+  input[type="reset"]:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  input[type="file"]:not(:disabled),
+  input[type="range"]:not(:disabled),
+  input[type="color"]:not(:disabled) {
+    cursor: pointer;
+  }
+  
+  /* 禁用自动填充 */
+  input,
+  textarea,
+  select {
+    -webkit-user-modify: read-write-plaintext-only;
+  }
+  
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  input:-webkit-autofill:active,
+  textarea:-webkit-autofill,
+  textarea:-webkit-autofill:hover,
+  textarea:-webkit-autofill:focus,
+  textarea:-webkit-autofill:active,
+  select:-webkit-autofill,
+  select:-webkit-autofill:hover,
+  select:-webkit-autofill:focus,
+  select:-webkit-autofill:active {
+    transition: background-color 5000s ease-in-out 0s;
+    -webkit-text-fill-color: inherit !important;
+  }
+  
+  /* Placeholder 颜色优化 */
+  input::placeholder,
+  textarea::placeholder {
+    color: oklch(54.8% 0.039 257.9);
+    opacity: 0.6;
+  }
+  
+  .dark input::placeholder,
+  .dark textarea::placeholder {
+    color: oklch(65% 0.02 260);
+    opacity: 0.7;
+  }
+  
+  /* 美化滚动条 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(70% 0.02 260) transparent;
+  }
+  
+  .dark * {
+    scrollbar-color: oklch(40% 0.02 260) transparent;
+  }
+  
+  /* Webkit 浏览器滚动条样式 */
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  *::-webkit-scrollbar-thumb {
+    background: oklch(70% 0.02 260);
+    border-radius: 4px;
+    transition: background 0.2s;
+  }
+  
+  *::-webkit-scrollbar-thumb:hover {
+    background: oklch(60% 0.03 260);
+  }
+  
+  .dark *::-webkit-scrollbar-thumb {
+    background: oklch(40% 0.02 260);
+  }
+  
+  .dark *::-webkit-scrollbar-thumb:hover {
+    background: oklch(50% 0.03 260);
+  }
+
+  .ks-shell {
+    @apply flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-sm;
+  }
+
+  .ks-shell-toolbar {
+    @apply shrink-0 border-b border-border bg-muted/30 px-3 py-2.5;
+  }
+
+  .ks-shell-footer {
+    @apply shrink-0 border-t border-border bg-muted/20;
+  }
+
+  .ks-list-scroll {
+    scrollbar-gutter: stable;
+    overscroll-behavior: contain;
+  }
+}
+
+
+/* Dialog 动画 - 模拟 Avalonia ShadEaseOutBack */
+.dialog-content {
+  transform: translate(-50%, -50%);
+}
+
+.dialog-content[data-state="open"] {
+  animation: dialog-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.dialog-content[data-state="closed"] {
+  animation: dialog-out 0.25s ease-out forwards;
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 50px)) scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes dialog-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 50px)) scale(0.7);
+  }
+}

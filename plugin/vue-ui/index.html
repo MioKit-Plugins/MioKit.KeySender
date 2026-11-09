@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>my-vue-app</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <!-- 尽早挂载 stub，避免 NavigationCompleted 时 setColorTheme 尚未定义 -->
+    <script>
+      (function () {
+        var queue = [];
+        window.__pendingColorThemes = queue;
+        window.setColorTheme = function (payload) {
+          queue.push(payload);
+        };
+      })();
+    </script>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

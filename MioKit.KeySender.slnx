@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/Plugin/">
+    <Project Path="plugin/MioKit.KeySender.csproj" />
+  </Folder>
+  <Folder Name="/Preview/">
+    <Project Path="preview/MioKit.KeySender.Preview.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="tests/MioKit.KeySender.Tests.csproj" />
+  </Folder>
+  <Folder Name="/Publish/" />
+</Solution>
