@@ -36,6 +36,7 @@ public sealed class KeySenderUiService : IDisposable
     private bool _windowAlive;
     private bool _sessionBound;
     private string? _activeSessionId;
+    private string? _pendingFocusNodeId;
     private long _nodesSequence = 1;
     private long _runsSequence = 1;
     private long _categoriesSequence = 1;
@@ -68,6 +69,8 @@ public sealed class KeySenderUiService : IDisposable
     public event EventHandler<NodesChangedDto>? NodesChanged;
 
     public event EventHandler<CategoriesChangedDto>? CategoriesChanged;
+
+    public event EventHandler<FocusNodeRequestedDto>? FocusNodeRequested;
 
     /// <summary>Host-only: window opened; session id binds on InitializeAsync.</summary>
     internal void OnWindowOpened()
@@ -151,6 +154,13 @@ public sealed class KeySenderUiService : IDisposable
             return Task.FromResult(Fail<InitializeDataDto>(error!));
         }
 
+        string? focusNodeId;
+        lock (_sessionGate)
+        {
+            focusNodeId = _pendingFocusNodeId;
+            _pendingFocusNodeId = null;
+        }
+
         var nodes = BuildNodePage(
             query: null,
             scope: KeySenderConst.ListScopeAll,
@@ -166,8 +176,105 @@ public sealed class KeySenderUiService : IDisposable
             Nodes = nodes,
             Runs = BuildRunPage(),
             HeldKeys = MapHeldKeys(_execution.GetHeldKeys()),
+            FocusNodeId = focusNodeId,
         };
         return Task.FromResult(ApiResult<InitializeDataDto>.Success(data));
+    }
+
+    /// <summary>
+    /// Host-only: open the manager and focus a node (search-result view/edit).
+    /// Pending id is delivered via <see cref="InitializeDataDto.FocusNodeId"/> on cold start,
+    /// or <see cref="FocusNodeRequested"/> when the window session is already bound.
+    /// </summary>
+    internal void RequestOpenNode(string nodeId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(nodeId);
+        var id = nodeId.Trim();
+
+        bool raiseEvent;
+        lock (_sessionGate)
+        {
+            _pendingFocusNodeId = id;
+            raiseEvent = _windowAlive && _sessionBound;
+        }
+
+        _plugin.OpenPluginConfigWindow();
+
+        if (!raiseEvent)
+        {
+            return;
+        }
+
+        string? focused;
+        lock (_sessionGate)
+        {
+            focused = _pendingFocusNodeId;
+            _pendingFocusNodeId = null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(focused))
+        {
+            FocusNodeRequested?.Invoke(this, new FocusNodeRequestedDto { NodeId = focused });
+        }
+    }
+
+    /// <summary>
+    /// Host-only: export nodes without a Vue session (search-result export).
+    /// Cancelled file dialogs return without throwing.
+    /// </summary>
+    internal async Task ExportFromHostAsync(
+        IReadOnlyList<string> nodeIds,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(nodeIds);
+        var ids = nodeIds
+            .Where(static id => !string.IsNullOrWhiteSpace(id))
+            .Select(static id => id.Trim())
+            .ToList();
+        if (ids.Count == 0)
+        {
+            throw new InvalidOperationException("未选择导出节点");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (IsRecordingBlocking())
+        {
+            throw new InvalidOperationException("录制进行中不能导出");
+        }
+
+        var picked = await PickSaveJsonAsync().ConfigureAwait(false);
+        if (!picked.Ok)
+        {
+            if (string.Equals(picked.Code, ValidationCodes.Cancelled, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            throw new InvalidOperationException(picked.Message ?? picked.Code ?? "导出失败");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            await using var stream = new FileStream(
+                picked.Path!,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 4096,
+                options: FileOptions.Asynchronous);
+
+            var result = await _transfer.ExportAsync(ids, stream, cancellationToken).ConfigureAwait(false);
+            if (!result.Ok)
+            {
+                throw new InvalidOperationException(
+                    result.Message ?? result.Code ?? "导出失败");
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new InvalidOperationException(ex.Message, ex);
+        }
     }
 
     public Task<ApiResult<NodePageDto>> GetListAsync(ListRequest request)
@@ -1073,6 +1180,7 @@ public sealed class KeySenderUiService : IDisposable
         if (group is not null)
         {
             foreach (var category in group.GetDescendants<KeySenderCategory>()
+                         .DistinctBy(static c => c.Id, StringComparer.Ordinal)
                          .OrderBy(static c => c.GetName() ?? string.Empty, StringComparer.OrdinalIgnoreCase)
                          .ThenBy(static c => c.Id, StringComparer.Ordinal))
             {
@@ -1084,7 +1192,6 @@ public sealed class KeySenderUiService : IDisposable
                     Name = category.GetName() ?? string.Empty,
                     Description = category.GetDescription() ?? string.Empty,
                     NodeCount = count,
-                    IsDefault = category.IsDefault,
                     CanRename = true,
                     CanDelete = true,
                 });

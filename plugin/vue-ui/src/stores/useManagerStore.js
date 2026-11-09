@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia';
 import { toast } from 'vue-sonner';
 import {
-  DEFAULT_CATEGORY_ID,
   LIST_SCOPE_ALL,
   LIST_SCOPE_BUILTIN,
   LIST_SCOPE_CATEGORY,
@@ -14,6 +13,36 @@ import { emptyDraft, newEventId, toNodeWrite } from '@/api/types.js';
 function draftFingerprint(draft) {
   if (!draft) return '';
   return JSON.stringify(toNodeWrite(draft));
+}
+
+/** Normalize Initialize / GetCategories payloads into unique CategoryListItem[]. */
+function normalizeCategoryItems(payload) {
+  let list = [];
+  if (Array.isArray(payload)) {
+    list = payload;
+  } else if (Array.isArray(payload?.items)) {
+    list = payload.items;
+  } else if (Array.isArray(payload?.Items)) {
+    list = payload.Items;
+  }
+
+  const seen = new Set();
+  const result = [];
+  for (const raw of list) {
+    if (!raw || typeof raw !== 'object') continue;
+    const categoryId = (raw.categoryId ?? raw.CategoryId ?? '').trim();
+    if (!categoryId || seen.has(categoryId)) continue;
+    seen.add(categoryId);
+    result.push({
+      categoryId,
+      name: raw.name ?? raw.Name ?? '',
+      description: raw.description ?? raw.Description ?? '',
+      nodeCount: raw.nodeCount ?? raw.NodeCount ?? 0,
+      canRename: raw.canRename ?? raw.CanRename ?? true,
+      canDelete: raw.canDelete ?? raw.CanDelete ?? true,
+    });
+  }
+  return result;
 }
 
 export const useManagerStore = defineStore('keySenderManager', {
@@ -119,9 +148,8 @@ export const useManagerStore = defineStore('keySenderManager', {
       if (state.listScope === LIST_SCOPE_CATEGORY && state.selectedCategoryId) {
         return state.selectedCategoryId;
       }
-      const fallback = state.categories.find((c) => c.categoryId === DEFAULT_CATEGORY_ID)
-        ?? state.categories[0];
-      return fallback?.categoryId ?? null;
+      // 「全部」等非分类 scope：不指定分类，后端挂到搜索组（未分类）
+      return null;
     },
     selectedCategory(state) {
       if (state.listScope !== LIST_SCOPE_CATEGORY || !state.selectedCategoryId) return null;
@@ -149,6 +177,11 @@ export const useManagerStore = defineStore('keySenderManager', {
           await this.refreshList();
         }),
         api.on('CategoriesChanged', () => this.refreshCategories()),
+        api.on('FocusNodeRequested', (payload) => {
+          const nodeId = payload?.nodeId;
+          if (!nodeId || !this.ready) return;
+          void this.requestSelectNode(nodeId);
+        }),
       ];
 
       this.loading = true;
@@ -162,11 +195,14 @@ export const useManagerStore = defineStore('keySenderManager', {
         this.displayName = data.displayName ?? '按键发送';
         this.limits = { ...this.limits, ...(data.limits ?? {}) };
         this.keyCatalog = data.keyCatalog ?? [];
-        this.categories = data.categories ?? [];
+        this.categories = normalizeCategoryItems(data.categories);
         this.applyListPage(data.nodes);
         this.heldKeys = data.heldKeys ?? this.heldKeys;
         this.runs = data.runs ?? this.runs;
         this.ready = true;
+        if (data.focusNodeId) {
+          await this.selectNode(data.focusNodeId);
+        }
       } catch (e) {
         toast.error('无法连接服务', { description: e?.message ?? String(e) });
       } finally {
@@ -212,7 +248,7 @@ export const useManagerStore = defineStore('keySenderManager', {
         toast.error('刷新分类失败', { description: res.error?.message });
         return;
       }
-      this.categories = res.data?.items ?? [];
+      this.categories = normalizeCategoryItems(res.data);
       if (
         this.listScope === LIST_SCOPE_CATEGORY
         && this.selectedCategoryId

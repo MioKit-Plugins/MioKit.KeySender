@@ -13,7 +13,4 @@ public class KeySenderCategory : MioObject
     }
 
     public override Guid MioType => KeySenderConst.CategoryTypeGuid;
-
-    public bool IsDefault
-        => string.Equals(Id, KeySenderConst.DefaultCategoryId, StringComparison.Ordinal);
 }

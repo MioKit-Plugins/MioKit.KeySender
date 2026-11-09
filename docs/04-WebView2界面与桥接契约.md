@@ -60,7 +60,7 @@ NodeListItem：nodeId、name、description、aliasNames、hotkeyDisplay、isPinn
 
 CategoryListItem：categoryId、name、description、nodeCount、isDefault、canRename、canDelete。
 
-ListRequest：query、scope（`all` | `builtin` | `category`）、categoryId、page、pageSize。搜索仅在当前 scope 内过滤。CreateNodeRequest / CopyNodeRequest 可带可选 categoryId；缺省落到默认分类。
+ListRequest：query、scope（`all` | `builtin` | `category`）、categoryId、page、pageSize。搜索仅在当前 scope 内过滤。CreateNodeRequest / CopyNodeRequest 可带可选 categoryId；缺省挂到搜索组（未分类）。
 
 分类 API：GetCategoriesAsync、CreateCategoryAsync、RenameCategoryAsync、DeleteCategoryAsync（级联删节点）、MoveNodesAsync。事件 CategoriesChanged（kind/categoryIds/sequenceNumber）与 NodesChanged 并存。InitializeData 额外返回 categories。
 

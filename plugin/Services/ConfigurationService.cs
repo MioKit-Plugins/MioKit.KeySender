@@ -55,15 +55,15 @@ public sealed class ConfigurationService : IConfigurationService
                 return blocked;
             }
 
-            var parentResult = ResolveCategoryParent(categoryId);
-            if (!parentResult.Ok || parentResult.Category is null)
+            var parentResult = ResolveNodeParent(categoryId);
+            if (!parentResult.Ok || parentResult.Parent is null)
             {
                 return ConfigurationResult.Fail(
                     parentResult.Code ?? ValidationCodes.CategoryNotFound,
                     parentResult.Message);
             }
 
-            var category = parentResult.Category;
+            var parent = parentResult.Parent;
             var id = Guid.NewGuid().ToString("D").ToUpperInvariant();
             var node = new KeySenderNode(id);
             // Name/Description only on the unpublished create object; cold fields go via property dict.
@@ -90,10 +90,10 @@ public sealed class ConfigurationService : IConfigurationService
             try
             {
                 await _data.UpdateParentsAsync(
-                        new Dictionary<string, string?> { [id] = category.Id })
+                        new Dictionary<string, string?> { [id] = parent.Id })
                     .ConfigureAwait(false);
                 RefreshLightFields(node, write);
-                node.SetParent(category);
+                node.SetParent(parent);
             }
             catch (Exception ex)
             {
@@ -361,7 +361,8 @@ public sealed class ConfigurationService : IConfigurationService
     }
 
     /// <summary>
-    /// Ensure default category exists, load category tree, and migrate flat user nodes under categories.
+    /// Load user categories under the search group and attach orphan user nodes as uncategorized
+    /// (directly under the search group). Does not invent a default category.
     /// </summary>
     public async Task EnsureCategoriesAndMigrateAsync(CancellationToken cancellationToken = default)
     {
@@ -369,9 +370,9 @@ public sealed class ConfigurationService : IConfigurationService
         try
         {
             var group = RequireSearchGroup();
-            var defaultCategory = await EnsureDefaultCategoryUnlockedAsync(group, cancellationToken)
-                .ConfigureAwait(false);
 
+            // QueryObjectByTypeAsync always creates fresh instances — never SetParent those
+            // when a live tree node with the same Id already exists under the search group.
             var categories = await _data.QueryObjectByTypeAsync<KeySenderCategory>(
                     KeySenderConst.CategoryTypeGuid,
                     isPreload: false)
@@ -384,20 +385,24 @@ public sealed class ConfigurationService : IConfigurationService
                     MioFeatureExtensions.DescriptionProperty,
                 };
 
-            foreach (var category in categories)
+            foreach (var queried in categories)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (category.Parent?.Id != group.Id)
+                var live = group.FindFirstDescendant<KeySenderCategory>(c =>
+                               string.Equals(c.Id, queried.Id, StringComparison.Ordinal))
+                           ?? queried;
+
+                if (live.Parent?.Id != group.Id)
                 {
                     await _data.UpdateParentsAsync(
-                            new Dictionary<string, string?> { [category.Id] = group.Id })
+                            new Dictionary<string, string?> { [live.Id] = group.Id })
                         .ConfigureAwait(false);
                 }
 
-                await _data.BatchLoadValueAsync(category, light).ConfigureAwait(false);
-                if (category.Parent != group)
+                await _data.BatchLoadValueAsync(live, light).ConfigureAwait(false);
+                if (live.Parent != group)
                 {
-                    category.SetParent(group);
+                    live.SetParent(group);
                 }
             }
 
@@ -417,27 +422,33 @@ public sealed class ConfigurationService : IConfigurationService
                     HotkeyExtension.HotkeyProperty,
                 };
 
-            foreach (var node in nodes)
+            foreach (var queried in nodes)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (BuiltInKeyCatalog.IsBuiltIn(node.Id))
+                if (BuiltInKeyCatalog.IsBuiltIn(queried.Id))
                 {
                     continue;
                 }
 
-                var parentCategory = node.Parent as KeySenderCategory;
+                var live = group.FindFirstDescendant<KeySenderNode>(n =>
+                               string.Equals(n.Id, queried.Id, StringComparison.Ordinal))
+                           ?? queried;
+
+                var parentCategory = live.Parent as KeySenderCategory;
                 var belongsToKnownCategory = parentCategory is not null
                     && parentCategory.Parent == group;
+                var underSearchGroup = ReferenceEquals(live.Parent, group);
 
-                if (!belongsToKnownCategory)
+                if (!belongsToKnownCategory && !underSearchGroup)
                 {
+                    // Uncategorized: park under search group; never invent a default category.
                     await _data.UpdateParentsAsync(
-                            new Dictionary<string, string?> { [node.Id] = defaultCategory.Id })
+                            new Dictionary<string, string?> { [live.Id] = group.Id })
                         .ConfigureAwait(false);
-                    node.SetParent(defaultCategory);
+                    live.SetParent(group);
                 }
 
-                await _data.BatchLoadValueAsync(node, nodeLight).ConfigureAwait(false);
+                await _data.BatchLoadValueAsync(live, nodeLight).ConfigureAwait(false);
             }
         }
         finally
@@ -835,7 +846,7 @@ public sealed class ConfigurationService : IConfigurationService
         return group;
     }
 
-    private sealed class CategoryParentResult
+    private sealed class NodeParentResult
     {
         public bool Ok { get; init; }
 
@@ -843,15 +854,16 @@ public sealed class ConfigurationService : IConfigurationService
 
         public string? Message { get; init; }
 
-        public KeySenderCategory? Category { get; init; }
+        /// <summary>Target parent: a user category, or the search group for uncategorized nodes.</summary>
+        public MioObject? Parent { get; init; }
 
-        public static CategoryParentResult Success(KeySenderCategory category) => new()
+        public static NodeParentResult Success(MioObject parent) => new()
         {
             Ok = true,
-            Category = category,
+            Parent = parent,
         };
 
-        public static CategoryParentResult Fail(string code, string message) => new()
+        public static NodeParentResult Fail(string code, string message) => new()
         {
             Ok = false,
             Code = code,
@@ -859,32 +871,26 @@ public sealed class ConfigurationService : IConfigurationService
         };
     }
 
-    private CategoryParentResult ResolveCategoryParent(string? categoryId)
+    /// <summary>
+    /// Resolve create/copy parent. Explicit categoryId must exist; null/empty → search group (uncategorized).
+    /// </summary>
+    private NodeParentResult ResolveNodeParent(string? categoryId)
     {
         var group = RequireSearchGroup();
-        if (!string.IsNullOrWhiteSpace(categoryId))
+        if (string.IsNullOrWhiteSpace(categoryId))
         {
-            var category = FindCategory(categoryId.Trim());
-            if (category is null)
-            {
-                return CategoryParentResult.Fail(
-                    ValidationCodes.CategoryNotFound,
-                    $"Category not found: {categoryId}");
-            }
-
-            return CategoryParentResult.Success(category);
+            return NodeParentResult.Success(group);
         }
 
-        var fallback = FindCategory(KeySenderConst.DefaultCategoryId)
-                       ?? group.GetDescendants<KeySenderCategory>().FirstOrDefault();
-        if (fallback is null)
+        var category = FindCategory(categoryId.Trim());
+        if (category is null)
         {
-            return CategoryParentResult.Fail(
+            return NodeParentResult.Fail(
                 ValidationCodes.CategoryNotFound,
-                "默认分类不存在，请先创建分类。");
+                $"Category not found: {categoryId}");
         }
 
-        return CategoryParentResult.Success(fallback);
+        return NodeParentResult.Success(category);
     }
 
     private KeySenderCategory? FindCategory(string categoryId)
@@ -893,78 +899,6 @@ public sealed class ConfigurationService : IConfigurationService
             g => g.Id == KeySenderConst.SearchGroupId);
         return group?.FindFirstDescendant<KeySenderCategory>(c =>
             string.Equals(c.Id, categoryId, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private async Task<KeySenderCategory> EnsureDefaultCategoryUnlockedAsync(
-        KeySenderSearchGroup group,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var existingInTree = group.FindFirstDescendant<KeySenderCategory>(c =>
-            string.Equals(c.Id, KeySenderConst.DefaultCategoryId, StringComparison.Ordinal));
-        if (existingInTree is not null)
-        {
-            if (string.IsNullOrWhiteSpace(existingInTree.GetName()))
-            {
-                existingInTree.SetName(KeySenderConst.DefaultCategoryName);
-            }
-
-            return existingInTree;
-        }
-
-        var existing = await _data.QueryObjectAsync<KeySenderCategory>(
-                KeySenderConst.DefaultCategoryId,
-                isPreload: false,
-                isLoadChild: false)
-            .ConfigureAwait(false);
-
-        if (existing is not null)
-        {
-            if (existing.MioType != KeySenderConst.CategoryTypeGuid)
-            {
-                throw new InvalidOperationException(
-                    $"{ValidationCodes.BuiltinIdentityConflict}: id {KeySenderConst.DefaultCategoryId} occupied by type {existing.MioType}.");
-            }
-
-            existing.SetName(KeySenderConst.DefaultCategoryName);
-            await _data.SaveObjectsAsync(
-                    [existing],
-                    new Dictionary<MioObject, Dictionary<IAttachEavProperty, object>>
-                    {
-                        [existing] = new()
-                        {
-                            [MioFeatureExtensions.NameProperty] = KeySenderConst.DefaultCategoryName,
-                            [MioFeatureExtensions.DescriptionProperty] = existing.GetDescription() ?? string.Empty,
-                        },
-                    })
-                .ConfigureAwait(false);
-            await _data.UpdateParentsAsync(
-                    new Dictionary<string, string?> { [existing.Id] = group.Id })
-                .ConfigureAwait(false);
-            existing.SetParent(group);
-            return existing;
-        }
-
-        var created = new KeySenderCategory(KeySenderConst.DefaultCategoryId);
-        created.SetName(KeySenderConst.DefaultCategoryName);
-        created.SetDescription("未单独归类的按键序列");
-        await _data.SaveObjectsAsync(
-                [created],
-                new Dictionary<MioObject, Dictionary<IAttachEavProperty, object>>
-                {
-                    [created] = new()
-                    {
-                        [MioFeatureExtensions.NameProperty] = KeySenderConst.DefaultCategoryName,
-                        [MioFeatureExtensions.DescriptionProperty] = "未单独归类的按键序列",
-                    },
-                })
-            .ConfigureAwait(false);
-        await _data.UpdateParentsAsync(
-                new Dictionary<string, string?> { [created.Id] = group.Id })
-            .ConfigureAwait(false);
-        created.SetParent(group);
-        return created;
     }
 
     private Task<KeySenderNode?> ResolveLiveUserNodeAsync(string nodeId, CancellationToken cancellationToken)

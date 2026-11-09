@@ -9,7 +9,6 @@ namespace KeySender;
 [EavType(KeySenderConst.KeySenderNodeTypeId)]
 public class KeySenderNode : MioObject,
     IKeySenderNodeFeature,
-    IInvokeFeature,
     IAliasNameFeature,
     IHotkeyFeature,
     IPinnedFeature,
@@ -48,5 +47,6 @@ public class KeySenderNode : MioObject,
 
         var execution = KeySenderRegister.Instance.ComponentContext.Resolve<IKeySenderExecutionService>();
         await execution.ExecuteAsync(this, context).ConfigureAwait(false);
+        await this.IncreaseAsync();
     }
 }

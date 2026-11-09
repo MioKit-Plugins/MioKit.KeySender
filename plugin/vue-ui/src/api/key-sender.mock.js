@@ -166,8 +166,6 @@ function ctrlChord(mainKey) {
   };
 }
 
-const DEFAULT_CATEGORY_ID = 'key-sender-default-category';
-
 function findCategory(categoryId) {
   return state.categories.find((c) => c.categoryId === categoryId) ?? null;
 }
@@ -198,7 +196,6 @@ function buildCategoryList() {
       name: c.name,
       description: c.description ?? '',
       nodeCount: state.nodes.filter((n) => !n.isBuiltIn && n.categoryId === c.categoryId).length,
-      isDefault: c.categoryId === DEFAULT_CATEGORY_ID,
       canRename: true,
       canDelete: true,
     }))
@@ -223,9 +220,8 @@ function bumpCategories(kind, categoryIds) {
 }
 
 function resolveTargetCategoryId(categoryId) {
-  if (categoryId && findCategory(categoryId)) return categoryId;
-  if (findCategory(DEFAULT_CATEGORY_ID)) return DEFAULT_CATEGORY_ID;
-  return state.categories[0]?.categoryId ?? null;
+  if (!categoryId) return null; // uncategorized
+  return findCategory(categoryId) ? categoryId : undefined;
 }
 
 function buildKeyCatalog() {
@@ -261,11 +257,6 @@ function createInitialState() {
   const workCategoryId = 'A2000001-0000-4000-8000-000000000010';
 
   const categories = [
-    {
-      categoryId: DEFAULT_CATEGORY_ID,
-      name: '默认分类',
-      description: '未单独归类的按键序列',
-    },
     {
       categoryId: workCategoryId,
       name: '办公',
@@ -337,7 +328,7 @@ function createInitialState() {
       isReadOnly: false,
       canEdit: true,
       canDelete: true,
-      categoryId: DEFAULT_CATEGORY_ID,
+      categoryId: null,
       beforeDelayMs: 0,
       afterDelayMs: 0,
       sequence: {
@@ -426,6 +417,7 @@ function createInitialState() {
       HeldKeysChanged: new Set(),
       NodesChanged: new Set(),
       CategoriesChanged: new Set(),
+      FocusNodeRequested: new Set(),
     },
   };
 }
@@ -682,7 +674,9 @@ export function createKeySenderMock() {
         }
       }
       const categoryId = resolveTargetCategoryId(request.categoryId);
-      if (!categoryId) return fail('category_not_found', '默认分类不存在，请先创建分类。');
+      if (categoryId === undefined) {
+        return fail('category_not_found', '分类不存在');
+      }
       const node = {
         nodeId: newEventId().toUpperCase(),
         name: detail.name.trim(),
@@ -771,7 +765,9 @@ export function createKeySenderMock() {
       const categoryId = resolveTargetCategoryId(
         request.categoryId ?? source.categoryId ?? null,
       );
-      if (!categoryId) return fail('category_not_found', '默认分类不存在，请先创建分类。');
+      if (categoryId === undefined) {
+        return fail('category_not_found', '分类不存在');
+      }
       const node = {
         ...write,
         nodeId: newEventId().toUpperCase(),

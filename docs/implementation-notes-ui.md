@@ -39,7 +39,7 @@ Mock **不能**宣称 Hook / SendInput / 焦点恢复已验证。
 
 ## 4. 已知缺口
 
-- 搜索结果「查看 / 编辑 / 导出」仍抛 `NotSupportedException`（`KeySenderNodeActions`）
+- 搜索结果「查看 / 编辑」经 `RequestOpenNode` 打开管理窗并聚焦；「导出」走宿主无 session 导出
 - 管理页不编辑触发热键（列表仅显示 `hotkeyDisplay`；宿主 `HotKeyAction`）
 - 无 Runs / HeldKeys 可视化面板（API 已就绪）
 - 文件对话框过滤 `*.json`，非 `.miokeys`

@@ -2,7 +2,8 @@ using KeySender.Views;
 
 namespace KeySender;
 
-public class KeySenderPlugin : PluginBase, IPluginConfigWindowFeature
+public class KeySenderPlugin : PluginBase, IPluginConfigWindowFeature,
+    ISearchableFeature, IInvokeFeature, IInvocationPresentationFeature
 {
     public KeySenderPlugin() : base(KeySenderConst.PluginId)
     {
@@ -15,6 +16,10 @@ public class KeySenderPlugin : PluginBase, IPluginConfigWindowFeature
     public void OpenPluginConfigWindow()
         => WindowManager.ShowUniqueWindow<PluginWebView>(Id, Id);
 
+    /// <summary>
+    /// 加载固定 Id 搜索组，确保内置节点就绪，并装载用户分类（不自动创建默认分类）。
+    /// 打开管理窗由插件自身 Search/Invoke 承担，不再挂独立管理入口节点。
+    /// </summary>
     protected override async Task StartCoreAsync(CancellationToken cancellationToken)
     {
         var container = Container ?? throw new InvalidOperationException("Plugin container is not initialized.");
@@ -22,7 +27,7 @@ public class KeySenderPlugin : PluginBase, IPluginConfigWindowFeature
         var config = container.Resolve<Services.ConfigurationService>();
 
         await EnsureSearchGroupAsync(data, cancellationToken).ConfigureAwait(false);
-        await EnsureManagerNodeAsync(data, cancellationToken).ConfigureAwait(false);
+        await RemoveLegacyManagerNodeAsync(data).ConfigureAwait(false);
         await config.EnsureBuiltInsAsync(cancellationToken).ConfigureAwait(false);
         await config.EnsureCategoriesAndMigrateAsync(cancellationToken).ConfigureAwait(false);
 
@@ -58,83 +63,96 @@ public class KeySenderPlugin : PluginBase, IPluginConfigWindowFeature
         });
     }
 
+    public ValueTask SearchAsync(
+        SearchRequest request,
+        IWriteOnlyResultList<SearchResult> writeOnlyResultList,
+        CancellationToken cancellationToken)
+    {
+        if (request.IsEmptySearchText)
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        if (!this.TryMatch(request.SearchText!, out var result, out var title))
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        writeOnlyResultList.Add(new SearchResult(request, this)
+        {
+            Title = title,
+            Description = Description,
+            MatchResult = result!.Value,
+            PinMode = SortPriority.Normal,
+            Source = "模拟按键",
+        });
+
+        return ValueTask.CompletedTask;
+    }
+
+    public Task InvokeAsync(InvokeContext context)
+    {
+        context.CancellationToken.ThrowIfCancellationRequested();
+        OpenPluginConfigWindow();
+        return Task.CompletedTask;
+    }
+
+    public InvocationPresentation GetPresentation(InvocationPresentationRequest request) => new()
+    {
+        Interaction = InvocationInteraction.CompleteBeforeExecution,
+    };
+
     private async Task EnsureSearchGroupAsync(IMioDataProvider data, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var existed = await data.ExistsAsync(KeySenderConst.SearchGroupId).ConfigureAwait(false);
         await EnsureTreeLoadedAsync<KeySenderSearchGroup>(KeySenderConst.SearchGroupId)
             .ConfigureAwait(false);
 
-        var group = this.FindFirstDescendant<KeySenderSearchGroup>(
-            g => g.Id == KeySenderConst.SearchGroupId);
-        if (group is not null)
+        if (existed)
         {
             return;
         }
 
-        group = new KeySenderSearchGroup(KeySenderConst.SearchGroupId);
+        var group = this.FindFirstDescendant<KeySenderSearchGroup>(
+            g => g.Id == KeySenderConst.SearchGroupId)
+            ?? throw new InvalidOperationException("Search group missing after EnsureTreeLoadedAsync.");
+
+        group.Name = "模拟按键";
+        group.Description = "搜索并执行按键序列节点";
         await data.SaveObjectsAsync(
                 [group],
                 new Dictionary<MioObject, Dictionary<IAttachEavProperty, object>>
                 {
                     [group] = new()
                     {
-                        [MioFeatureExtensions.NameProperty] = group.Name ?? "模拟按键",
-                        [MioFeatureExtensions.DescriptionProperty] = group.Description ?? string.Empty,
+                        [MioFeatureExtensions.NameProperty] = group.Name,
+                        [MioFeatureExtensions.DescriptionProperty] = group.Description,
                     },
                 })
             .ConfigureAwait(false);
-        await data.UpdateParentsAsync(new Dictionary<string, string?> { [group.Id] = Id })
-            .ConfigureAwait(false);
-        group.SetParent(this);
     }
 
-    private async Task EnsureManagerNodeAsync(IMioDataProvider data, CancellationToken cancellationToken)
+    private async Task RemoveLegacyManagerNodeAsync(IMioDataProvider data)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         var group = this.FindFirstDescendant<KeySenderSearchGroup>(
-            g => g.Id == KeySenderConst.SearchGroupId)
-            ?? throw new InvalidOperationException("Search group missing before manager ensure.");
-
-        if (group.FindFirstDescendant<OpenKeySenderManagerNode>(
-                n => n.Id == KeySenderConst.ManagerNodeId) is not null)
+            g => g.Id == KeySenderConst.SearchGroupId);
+        var legacy = group?.Children.FirstOrDefault(x => x.Id == KeySenderConst.ManagerNodeId);
+        if (legacy is not null)
         {
-            return;
+            legacy.SetParent(null);
         }
 
-        var existing = await data.QueryObjectAsync<OpenKeySenderManagerNode>(
-                KeySenderConst.ManagerNodeId,
-                isPreload: false,
-                isLoadChild: false)
-            .ConfigureAwait(false);
-
-        if (existing is not null)
+        try
         {
-            await data.UpdateParentsAsync(
-                    new Dictionary<string, string?> { [existing.Id] = group.Id })
-                .ConfigureAwait(false);
-            if (existing.Parent != group)
-            {
-                existing.SetParent(group);
-            }
-
-            return;
+            await data.DeleteAsync(KeySenderConst.ManagerNodeId).ConfigureAwait(false);
         }
-
-        var manager = new OpenKeySenderManagerNode(KeySenderConst.ManagerNodeId);
-        await data.SaveObjectsAsync(
-                [manager],
-                new Dictionary<MioObject, Dictionary<IAttachEavProperty, object>>
-                {
-                    [manager] = new()
-                    {
-                        [MioFeatureExtensions.NameProperty] = manager.Name ?? "模拟按键管理",
-                        [MioFeatureExtensions.DescriptionProperty] = manager.Description ?? string.Empty,
-                    },
-                })
-            .ConfigureAwait(false);
-        await data.UpdateParentsAsync(
-                new Dictionary<string, string?> { [manager.Id] = group.Id })
-            .ConfigureAwait(false);
-        manager.SetParent(group);
+        catch (Exception ex)
+        {
+            Context.Logger.Debug(
+                ex,
+                "Failed to delete legacy manager node {ManagerNodeId}.",
+                KeySenderConst.ManagerNodeId);
+        }
     }
 }

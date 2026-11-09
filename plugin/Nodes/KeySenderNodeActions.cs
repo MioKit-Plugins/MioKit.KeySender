@@ -1,11 +1,12 @@
 using KeySender.BuiltIn;
 using KeySender.Services;
+using Lucide.Avalonia;
 
 namespace KeySender;
 
 /// <summary>
-/// Result-menu placeholders. UI-backed edit/view/export defer to later packages;
-/// copy/delete call ConfigurationService when available.
+/// Search-result Alt menu for KeySender nodes: view/edit open the manager,
+/// export/copy/delete call host services.
 /// </summary>
 internal static class KeySenderNodeActions
 {
@@ -16,13 +17,13 @@ internal static class KeySenderNodeActions
 
         if (BuiltInKeyCatalog.IsBuiltIn(node.Id))
         {
-            actions.Add(new DeferredUiAction("查看", "查看内置节点详情（UI 阶段待实现）"));
+            actions.Add(new OpenNodeAction("查看", LucideIconKind.Eye));
             actions.Add(new CopyNodeAction("复制为自定义"));
-            actions.Add(new DeferredUiAction("导出", "导出（Transfer 阶段待实现）"));
+            actions.Add(new ExportNodeAction());
         }
         else
         {
-            actions.Add(new DeferredUiAction("编辑", "编辑节点（UI 阶段待实现）"));
+            actions.Add(new OpenNodeAction("编辑", LucideIconKind.Pencil));
             actions.Add(new CopyNodeAction("复制"));
             actions.Add(new DeleteNodeAction());
         }
@@ -34,22 +35,45 @@ internal static class KeySenderNodeActions
         return ValueTask.FromResult<IEnumerable<ISearchResultAction>>(actions);
     }
 
-    private sealed class DeferredUiAction : SearchResultActionBase
+    private sealed class OpenNodeAction : SearchResultActionBase
     {
-        private readonly string _message;
-
-        public DeferredUiAction(string text, string message)
+        public OpenNodeAction(string text, LucideIconKind icon)
         {
             Text = text;
             Group = "模拟按键";
-            _message = message;
+            Icon = icon;
         }
 
         public override Task ExecuteAsync(
             SearchResult result,
             InvokeContext context,
             CancellationToken cancellationToken)
-            => throw new NotSupportedException(_message);
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            MioIoc.Resolve<ISearchBoxWindow>().ResetOverlay();
+            var ui = KeySenderRegister.Instance.ComponentContext.Resolve<KeySenderUiService>();
+            ui.RequestOpenNode(result.OwnerObject.Id);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ExportNodeAction : SearchResultActionBase
+    {
+        public ExportNodeAction()
+        {
+            Text = "导出";
+            Group = "模拟按键";
+            Icon = LucideIconKind.Download;
+        }
+
+        public override Task ExecuteAsync(
+            SearchResult result,
+            InvokeContext context,
+            CancellationToken cancellationToken)
+        {
+            var ui = KeySenderRegister.Instance.ComponentContext.Resolve<KeySenderUiService>();
+            return ui.ExportFromHostAsync([result.OwnerObject.Id], cancellationToken);
+        }
     }
 
     private sealed class CopyNodeAction : SearchResultActionBase
@@ -58,6 +82,7 @@ internal static class KeySenderNodeActions
         {
             Text = text;
             Group = "模拟按键";
+            Icon = LucideIconKind.ClipboardCopy;
         }
 
         public override async Task ExecuteAsync(
@@ -91,6 +116,7 @@ internal static class KeySenderNodeActions
         {
             Text = "删除";
             Group = "模拟按键";
+            Icon = LucideIconKind.Trash2;
         }
 
         public override async Task ExecuteAsync(

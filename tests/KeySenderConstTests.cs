@@ -43,8 +43,6 @@ public sealed class KeySenderConstTests
     {
         Assert.Equal("key-sender-search-group", KeySenderConst.SearchGroupId);
         Assert.Equal("key-sender-manager-node", KeySenderConst.ManagerNodeId);
-        Assert.Equal("key-sender-default-category", KeySenderConst.DefaultCategoryId);
-        Assert.Equal("默认分类", KeySenderConst.DefaultCategoryName);
         Assert.Equal("all", KeySenderConst.ListScopeAll);
         Assert.Equal("builtin", KeySenderConst.ListScopeBuiltin);
         Assert.Equal("category", KeySenderConst.ListScopeCategory);

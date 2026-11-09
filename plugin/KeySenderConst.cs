@@ -17,6 +17,7 @@ public static class KeySenderConst
     public const string SearchGroupTypeId = "D3244F5B-5AE1-4BA0-9BED-F8A2766BC71E";
     public static readonly Guid SearchGroupTypeGuid = Guid.Parse(SearchGroupTypeId);
 
+    /// <summary>Legacy manager-entry type id; node removed — kept for identity stability / cleanup.</summary>
     public const string ManagerNodeTypeId = "DDE52F58-EBCE-4212-80F9-B317AC4F6850";
     public static readonly Guid ManagerNodeTypeGuid = Guid.Parse(ManagerNodeTypeId);
 
@@ -42,13 +43,8 @@ public static class KeySenderConst
     /// <summary>Fixed search-group instance id for <c>EnsureTreeLoadedAsync</c>.</summary>
     public const string SearchGroupId = "key-sender-search-group";
 
-    /// <summary>Fixed manager-entry instance id under the search group.</summary>
+    /// <summary>Legacy manager-entry instance id; cleaned up on start.</summary>
     public const string ManagerNodeId = "key-sender-manager-node";
-
-    /// <summary>Fixed default user category instance id under the search group.</summary>
-    public const string DefaultCategoryId = "key-sender-default-category";
-
-    public const string DefaultCategoryName = "默认分类";
 
     public const string CopyNameSuffix = " 副本";
 

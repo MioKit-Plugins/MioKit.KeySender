@@ -46,6 +46,7 @@ const virtualItems = computed(() => [
 function isSelected(item) {
   if (item.scope === LIST_SCOPE_CATEGORY) {
     return store.listScope === LIST_SCOPE_CATEGORY
+      && !!item.categoryId
       && store.selectedCategoryId === item.categoryId;
   }
   return store.listScope === item.scope;

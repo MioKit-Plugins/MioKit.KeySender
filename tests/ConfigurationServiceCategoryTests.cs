@@ -28,7 +28,7 @@ public sealed class ConfigurationServiceCategoryTests
         var service = new ConfigurationService(data, plugin: null);
 
         var result = await service.RenameCategoryAsync(
-            KeySenderConst.DefaultCategoryId,
+            Guid.NewGuid().ToString("D").ToUpperInvariant(),
             " ");
 
         Assert.False(result.Ok);
@@ -60,7 +60,7 @@ public sealed class ConfigurationServiceCategoryTests
                 Guid.NewGuid().ToString("D").ToUpperInvariant(),
                 KeySenderConst.BuiltInCopyNodeId,
             ],
-            KeySenderConst.DefaultCategoryId);
+            Guid.NewGuid().ToString("D").ToUpperInvariant());
 
         Assert.False(result.Ok);
         Assert.Equal(ValidationCodes.BuiltinReadOnly, result.Code);

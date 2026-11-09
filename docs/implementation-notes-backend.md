@@ -97,7 +97,7 @@
 1. **导入 Commit**：按节点顺序调用 `ConfigurationService.CreateAsync`，非整包单次 `SaveObjectsAsync`；部分已创建后失败返回 `persisted`/`createdIds` 并消费预览。
 2. **导出 I/O**：`TransferService.ExportAsync` 逐节点 `GetDetailAsync` 后内存组装再写流；`KeySenderUiService` 文件框过滤 `*.json`（建议名 `keysender-export.json`），逻辑格式仍为 `miokit.key-sender` v2。
 3. **错误码**：权威源 `ValidationCodes.cs`；无 `recursive_trigger`，冲突统一 `output_hotkey_conflict`。另有 `category_*`、`empty_sequence`、`execution_not_ready` 等。
-4. **搜索附加操作**：`KeySenderNodeActions` 中查看/编辑/导出仍为 `DeferredUiAction` → `NotSupportedException`；复制/删除已接 `ConfigurationService`。
+4. **搜索附加操作**：`KeySenderNodeActions` 查看/编辑走 `RequestOpenNode`；导出走 `ExportFromHostAsync`；复制/删除接 `ConfigurationService`；自定义 action 均设 Lucide `Icon`。
 5. **Runs/HeldKeys 面板**：桥接与轮询（~400ms）已有，管理页不渲染；释放入口为录制阻挡对话框与 Avalonia 关窗三选一。
 6. **测试缝**：`IRunConfigurationSource`、`IKeyboardHookSource`、`IDelayService`、`ITargetWindowOps`、`IExternalKeyPrep` — 生产有 Win32/Native，CI 默认 Fake。
 7. **Scaffold 传递警告**（MessagePack / WindowsBase）未处理。
@@ -106,4 +106,4 @@
 
 - 保持 `dotnet test` 绿
 - 在 MioKit 宿主补 Host 标记 T 项与 06 阶段 6
-- 按需补搜索菜单「打开管理器/编辑」与 Runs 面板
+- 按需补 Runs/HeldKeys 可视化面板

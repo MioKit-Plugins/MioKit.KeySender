@@ -38,9 +38,9 @@ const EVENT_NAMES = [
   'HeldKeysChanged',
   'NodesChanged',
   'CategoriesChanged',
+  'FocusNodeRequested',
 ];
 
-export const DEFAULT_CATEGORY_ID = 'key-sender-default-category';
 export const LIST_SCOPE_ALL = 'all';
 export const LIST_SCOPE_BUILTIN = 'builtin';
 export const LIST_SCOPE_CATEGORY = 'category';

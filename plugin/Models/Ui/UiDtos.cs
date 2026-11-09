@@ -196,6 +196,14 @@ public sealed class InitializeDataDto
     public required RunPageDto Runs { get; init; }
 
     public required HeldKeysSnapshotDto HeldKeys { get; init; }
+
+    /// <summary>Optional node to select after bootstrap (search-result deep link).</summary>
+    public string? FocusNodeId { get; init; }
+}
+
+public sealed class FocusNodeRequestedDto
+{
+    public required string NodeId { get; init; }
 }
 
 public sealed class CategoryListItemDto
@@ -207,8 +215,6 @@ public sealed class CategoryListItemDto
     public string Description { get; init; } = "";
 
     public int NodeCount { get; init; }
-
-    public bool IsDefault { get; init; }
 
     public bool CanRename { get; init; } = true;
 

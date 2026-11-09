@@ -16,7 +16,6 @@ public class KeySenderRegister : RegisterBase<KeySenderRegister>
             .AsSelf();
 
         builder.RegisterType<KeySenderSearchGroup>().AsSelf().InstancePerDependency();
-        builder.RegisterType<OpenKeySenderManagerNode>().AsSelf().InstancePerDependency();
         builder.RegisterType<KeySenderCategory>().AsSelf().InstancePerDependency();
         builder.RegisterType<KeySenderNode>().AsSelf().InstancePerDependency();
 

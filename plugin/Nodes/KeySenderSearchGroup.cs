@@ -38,13 +38,9 @@ public class KeySenderSearchGroup : MioObject, ISearchableFeature
             foreach (var node in this.GetDescendants<KeySenderNode>())
             {
                 ct.ThrowIfCancellationRequested();
-
-                if (!Matches(node, text))
-                {
-                    continue;
-                }
-
+                
                 var matched = node.TryMatch(text, out var match, out var title);
+                if(!matched) continue;
                 results.Add(new SearchResult(request, node)
                 {
                     Title = !string.IsNullOrEmpty(title)
@@ -64,33 +60,5 @@ public class KeySenderSearchGroup : MioObject, ISearchableFeature
             return ValueTask.FromException(exception);
         }
     }
-
-    private static bool Matches(KeySenderNode node, string text)
-    {
-        if (ContainsIgnoreCase(node.GetName(), text)
-            || ContainsIgnoreCase(node.GetDescription(), text))
-        {
-            return true;
-        }
-
-        var aliases = node.GetAliasName();
-        if (aliases is null)
-        {
-            return false;
-        }
-
-        foreach (var alias in aliases)
-        {
-            if (ContainsIgnoreCase(alias, text))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool ContainsIgnoreCase(string? haystack, string needle)
-        => !string.IsNullOrEmpty(haystack)
-           && haystack.Contains(needle, StringComparison.OrdinalIgnoreCase);
+    
 }

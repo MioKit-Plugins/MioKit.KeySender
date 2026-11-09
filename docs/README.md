@@ -142,7 +142,7 @@ LeftControl KeyUp，  前等待 20 ms
 仍待：
 
 1. 真实宿主验收：录制 Hook、SendInput、焦点恢复、热键冲突、启停泄漏与卸载释放（06 中 Host 标记项）。
-2. 搜索附加操作「查看 / 编辑 / 导出」目前仍抛 `NotSupportedException`；复制路径在搜索菜单会自动带警告指纹（无二次确认 UI）。
+2. 搜索附加操作「查看 / 编辑 / 导出」已接管理窗深链与宿主导出；复制路径在搜索菜单会自动带警告指纹（无二次确认 UI）。
 3. 管理页不展示 Runs/HeldKeys 面板（后端 API 与关窗三选一已有）；按产品需要可补。
 4. 导入 Commit 为按节点顺序 `CreateAsync`（非整包单次 `SaveObjectsAsync`）；文件对话框当前过滤 `*.json`。
 5. 正式 pack / inspect 签字与发布记录。
