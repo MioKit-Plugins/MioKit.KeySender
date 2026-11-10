@@ -251,6 +251,58 @@
     scrollbar-gutter: stable;
     overscroll-behavior: contain;
   }
+
+  /* Custom HTML5 drag image: compact oval chip instead of the long table row. */
+  .ks-drag-ghost {
+    pointer-events: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 9999;
+    display: inline-flex;
+    max-width: 14rem;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.625rem 1.05rem;
+    border-radius: 9999px;
+    border: 1px solid color-mix(in oklab, var(--primary) 28%, transparent);
+    background: var(--primary);
+    color: var(--primary-foreground);
+    box-shadow:
+      0 10px 24px color-mix(in oklab, var(--primary) 28%, transparent),
+      0 2px 6px color-mix(in oklab, var(--foreground) 12%, transparent);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    transform: translate(-10000px, -10000px);
+  }
+
+  .ks-drag-ghost__icon {
+    display: grid;
+    width: 1.75rem;
+    height: 1.75rem;
+    flex-shrink: 0;
+    place-items: center;
+    border-radius: 9999px;
+    background: color-mix(in oklab, var(--primary-foreground) 16%, transparent);
+  }
+
+  .ks-drag-ghost__label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ks-drag-ghost__meta {
+    flex-shrink: 0;
+    border-radius: 9999px;
+    padding: 0.125rem 0.5rem;
+    background: color-mix(in oklab, var(--primary-foreground) 18%, transparent);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
 }
 
 

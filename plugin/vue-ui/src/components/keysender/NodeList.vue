@@ -61,6 +61,39 @@ function clearFilter() {
   store.setQuery('');
 }
 
+function createDragGhost(node, count, isCopy) {
+  const ghost = document.createElement('div');
+  ghost.className = 'ks-drag-ghost';
+  ghost.setAttribute('aria-hidden', 'true');
+
+  const icon = document.createElement('span');
+  icon.className = 'ks-drag-ghost__icon';
+  icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2" ry="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/></svg>';
+
+  const label = document.createElement('span');
+  label.className = 'ks-drag-ghost__label';
+  label.textContent = node.name || '未命名';
+
+  ghost.append(icon, label);
+
+  if (count > 1) {
+    const badge = document.createElement('span');
+    badge.className = 'ks-drag-ghost__meta';
+    badge.textContent = String(count);
+    ghost.append(badge);
+  }
+
+  if (isCopy) {
+    const copyHint = document.createElement('span');
+    copyHint.className = 'ks-drag-ghost__meta';
+    copyHint.textContent = '复制';
+    ghost.append(copyHint);
+  }
+
+  document.body.appendChild(ghost);
+  return ghost;
+}
+
 function onRowDragStart(node, event) {
   const selected = store.selectedIds.includes(node.nodeId)
     ? [...store.selectedIds]
@@ -72,6 +105,11 @@ function onRowDragStart(node, event) {
   event.dataTransfer.effectAllowed = 'copyMove';
   event.dataTransfer.setData(NODE_DRAG_MIME, payload);
   event.dataTransfer.setData('text/plain', payload);
+
+  const ghost = createDragGhost(node, selected.length, !!event.ctrlKey);
+  const rect = ghost.getBoundingClientRect();
+  event.dataTransfer.setDragImage(ghost, Math.round(rect.width / 2), Math.round(rect.height / 2));
+  requestAnimationFrame(() => ghost.remove());
 }
 </script>
 

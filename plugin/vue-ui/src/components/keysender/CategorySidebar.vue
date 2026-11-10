@@ -54,17 +54,36 @@ function selectItem(item) {
   store.selectScope(item.scope, item.categoryId);
 }
 
-function onDragOver(event, item) {
-  if (!item.droppable) return;
+function isNodeDrag(event) {
   const types = event.dataTransfer?.types ?? [];
-  if (![...types].includes(NODE_DRAG_MIME) && ![...types].includes('text/plain')) return;
-  event.preventDefault();
-  event.dataTransfer.dropEffect = event.ctrlKey ? 'copy' : 'move';
-  dropTargetId.value = item.categoryId;
+  return [...types].includes(NODE_DRAG_MIME) || [...types].includes('text/plain');
 }
 
-function onDragLeave(item) {
+function onDragOver(event, item) {
+  if (!item.droppable || !isNodeDrag(event)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = event.ctrlKey ? 'copy' : 'move';
+  if (dropTargetId.value !== item.categoryId) {
+    dropTargetId.value = item.categoryId;
+  }
+}
+
+function onDragLeave(event, item) {
+  const next = event.relatedTarget;
+  if (next instanceof Node && event.currentTarget instanceof Node
+      && event.currentTarget.contains(next)) {
+    return;
+  }
   if (dropTargetId.value === item.categoryId) dropTargetId.value = null;
+}
+
+function onSidebarDragLeave(event) {
+  const next = event.relatedTarget;
+  if (next instanceof Node && event.currentTarget instanceof Node
+      && event.currentTarget.contains(next)) {
+    return;
+  }
+  dropTargetId.value = null;
 }
 
 async function onDrop(event, item) {
@@ -86,11 +105,20 @@ async function onDrop(event, item) {
     copy: !!event.ctrlKey || !!payload?.copy,
   });
 }
+
+function categorySelected(categoryId) {
+  return isSelected({ scope: LIST_SCOPE_CATEGORY, categoryId });
+}
+
+function categoryDropActive(categoryId) {
+  return dropTargetId.value === categoryId;
+}
 </script>
 
 <template>
   <aside
     class="ks-category-sidebar flex h-full w-60 shrink-0 flex-col overflow-hidden border-r border-border bg-muted/20"
+    @dragleave="onSidebarDragLeave"
   >
     <div class="ks-list-scroll min-h-0 flex-1 space-y-1 overflow-auto p-2">
       <button
@@ -136,26 +164,26 @@ async function onDrop(event, item) {
         v-for="category in store.categories"
         :key="category.categoryId"
         type="button"
-        class="ks-category-item group relative flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors"
-        :class="[
-          isSelected({ scope: LIST_SCOPE_CATEGORY, categoryId: category.categoryId })
+        class="ks-category-item group relative flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-[background-color,box-shadow,color,transform] duration-150"
+        :class="categoryDropActive(category.categoryId)
+          ? 'bg-primary/15 text-primary ring-2 ring-inset ring-primary/60'
+          : categorySelected(category.categoryId)
             ? 'bg-primary/10 text-primary'
-            : 'text-foreground hover:bg-muted/70',
-          dropTargetId === category.categoryId ? 'ring-2 ring-primary/40' : '',
-        ]"
+            : 'text-foreground hover:bg-muted/70'"
         :title="category.name || '分类'"
         @click="selectItem({ scope: LIST_SCOPE_CATEGORY, categoryId: category.categoryId })"
         @dragover="onDragOver($event, { droppable: true, categoryId: category.categoryId })"
-        @dragleave="onDragLeave({ categoryId: category.categoryId })"
+        @dragleave="onDragLeave($event, { categoryId: category.categoryId })"
         @drop="onDrop($event, { droppable: true, categoryId: category.categoryId })"
       >
         <span
-          v-if="isSelected({ scope: LIST_SCOPE_CATEGORY, categoryId: category.categoryId })"
+          v-if="categorySelected(category.categoryId) || categoryDropActive(category.categoryId)"
           class="absolute inset-y-1.5 left-0 w-1 rounded-full bg-primary"
+          :class="categoryDropActive(category.categoryId) ? 'opacity-100' : 'opacity-90'"
         />
         <span
-          class="grid size-8 shrink-0 place-items-center rounded-md"
-          :class="isSelected({ scope: LIST_SCOPE_CATEGORY, categoryId: category.categoryId })
+          class="grid size-8 shrink-0 place-items-center rounded-md transition-colors duration-150"
+          :class="categoryDropActive(category.categoryId) || categorySelected(category.categoryId)
             ? 'bg-primary text-primary-foreground'
             : 'bg-muted text-muted-foreground'"
         >
@@ -165,12 +193,15 @@ async function onDrop(event, item) {
           <span class="block truncate text-sm font-medium leading-tight">{{ category.name }}</span>
           <span
             class="mt-0.5 block truncate text-[11px]"
-            :class="isSelected({ scope: LIST_SCOPE_CATEGORY, categoryId: category.categoryId })
+            :class="categoryDropActive(category.categoryId) || categorySelected(category.categoryId)
               ? 'text-primary/80'
               : 'text-muted-foreground'"
           >
-            {{ category.nodeCount }} 个节点
-            <template v-if="category.description"> · {{ category.description }}</template>
+            <template v-if="categoryDropActive(category.categoryId)">松开以移入此分类</template>
+            <template v-else>
+              {{ category.nodeCount }} 个节点
+              <template v-if="category.description"> · {{ category.description }}</template>
+            </template>
           </span>
         </span>
       </button>

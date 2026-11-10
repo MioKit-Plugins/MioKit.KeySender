@@ -62,6 +62,8 @@ public partial class PluginWebView : ShadWindow
                 return;
             }
 
+            DisableWebViewAutofill();
+
             await WebView.InitializeBridgeAsync(services, _bridgeServiceProvider);
             if (_isClosed)
             {
@@ -234,6 +236,25 @@ public partial class PluginWebView : ShadWindow
         if (!_isInitializing)
         {
             DisposeBridgeServices();
+        }
+    }
+
+    private void DisableWebViewAutofill()
+    {
+        try
+        {
+            var profile = WebView.CoreWebView2?.Profile;
+            if (profile is null)
+            {
+                return;
+            }
+
+            profile.IsGeneralAutofillEnabled = false;
+            profile.IsPasswordAutosaveEnabled = false;
+        }
+        catch
+        {
+            // HTML autocomplete=off remains as fallback.
         }
     }
 
