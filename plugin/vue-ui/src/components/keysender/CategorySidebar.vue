@@ -4,8 +4,6 @@ import {
   Folder,
   Globe,
   Layers,
-  PanelLeftClose,
-  PanelLeftOpen,
   Pencil,
   Plus,
   Trash2,
@@ -92,8 +90,7 @@ async function onDrop(event, item) {
 
 <template>
   <aside
-    class="ks-category-sidebar flex h-full shrink-0 flex-col border-r border-border bg-muted/20"
-    :class="store.sidebarCollapsed ? 'w-14' : 'w-60'"
+    class="ks-category-sidebar flex h-full w-60 shrink-0 flex-col overflow-hidden border-r border-border bg-muted/20"
   >
     <div class="ks-list-scroll min-h-0 flex-1 space-y-1 overflow-auto p-2">
       <button
@@ -104,6 +101,7 @@ async function onDrop(event, item) {
         :class="isSelected(item)
           ? 'bg-primary/10 text-primary'
           : 'text-foreground hover:bg-muted/70'"
+        :title="item.title"
         @click="selectItem(item)"
       >
         <span
@@ -116,7 +114,7 @@ async function onDrop(event, item) {
         >
           <component :is="item.icon" class="size-4" />
         </span>
-        <span v-if="!store.sidebarCollapsed" class="min-w-0 flex-1">
+        <span class="min-w-0 flex-1">
           <span class="block truncate text-sm font-medium leading-tight">{{ item.title }}</span>
           <span
             class="mt-0.5 block truncate text-[11px]"
@@ -128,7 +126,7 @@ async function onDrop(event, item) {
       </button>
 
       <div
-        v-if="!store.sidebarCollapsed && store.categories.length"
+        v-if="store.categories.length"
         class="px-2 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
       >
         我的分类
@@ -145,6 +143,7 @@ async function onDrop(event, item) {
             : 'text-foreground hover:bg-muted/70',
           dropTargetId === category.categoryId ? 'ring-2 ring-primary/40' : '',
         ]"
+        :title="category.name || '分类'"
         @click="selectItem({ scope: LIST_SCOPE_CATEGORY, categoryId: category.categoryId })"
         @dragover="onDragOver($event, { droppable: true, categoryId: category.categoryId })"
         @dragleave="onDragLeave({ categoryId: category.categoryId })"
@@ -162,7 +161,7 @@ async function onDrop(event, item) {
         >
           <Folder class="size-4" />
         </span>
-        <span v-if="!store.sidebarCollapsed" class="min-w-0 flex-1">
+        <span class="min-w-0 flex-1">
           <span class="block truncate text-sm font-medium leading-tight">{{ category.name }}</span>
           <span
             class="mt-0.5 block truncate text-[11px]"
@@ -177,43 +176,35 @@ async function onDrop(event, item) {
       </button>
     </div>
 
-    <div class="flex shrink-0 items-center justify-between gap-1 border-t border-border px-2 py-1.5">
-      <div class="flex items-center gap-0.5">
-        <Button
-          size="icon"
-          variant="ghost"
-          class="size-8"
-          @click="store.openCreateCategoryDialog()"
-        >
-          <Plus class="size-4" />
-        </Button>
-        <Button
-          size="icon"
-          variant="ghost"
-          class="size-8"
-          :disabled="!store.canEditSelectedCategory"
-          @click="store.openRenameCategoryDialog()"
-        >
-          <Pencil class="size-3.5" />
-        </Button>
-        <Button
-          size="icon"
-          variant="ghost"
-          class="size-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
-          :disabled="!store.canDeleteSelectedCategory"
-          @click="store.requestDeleteCategory()"
-        >
-          <Trash2 class="size-3.5" />
-        </Button>
-      </div>
+    <div class="flex shrink-0 items-center gap-0.5 border-t border-border px-2 py-1.5">
       <Button
         size="icon"
         variant="ghost"
         class="size-8"
-        @click="store.toggleSidebarCollapsed()"
+        title="新建分类"
+        @click="store.openCreateCategoryDialog()"
       >
-        <PanelLeftClose v-if="!store.sidebarCollapsed" class="size-4" />
-        <PanelLeftOpen v-else class="size-4" />
+        <Plus class="size-4" />
+      </Button>
+      <Button
+        size="icon"
+        variant="ghost"
+        class="size-8"
+        title="重命名分类"
+        :disabled="!store.canEditSelectedCategory"
+        @click="store.openRenameCategoryDialog()"
+      >
+        <Pencil class="size-3.5" />
+      </Button>
+      <Button
+        size="icon"
+        variant="ghost"
+        class="size-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+        title="删除分类"
+        :disabled="!store.canDeleteSelectedCategory"
+        @click="store.requestDeleteCategory()"
+      >
+        <Trash2 class="size-3.5" />
       </Button>
     </div>
   </aside>

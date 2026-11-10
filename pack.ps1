@@ -1,4 +1,6 @@
-﻿[CmdletBinding()]
+﻿# WebView2 插件必须先 pnpm build 再 dotnet pack。
+# MCP pack_plugin / 单独 dotnet pack 只会打包现有 plugin/ui/dist，不会重建 vue-ui。
+[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)] [string]$PackageVersion,
     [string]$PackageId = "MioKit.KeySender",

@@ -11,6 +11,7 @@ internal sealed class RecordingMioDataProvider : IMioDataProvider
 {
     private readonly List<string> _categoryIds;
     private readonly List<string> _nodeIds;
+    private readonly Dictionary<string, string> _categoryNames;
 
     public int QueryCategoryByTypeCount { get; private set; }
 
@@ -18,10 +19,14 @@ internal sealed class RecordingMioDataProvider : IMioDataProvider
 
     public RecordingMioDataProvider(
         IEnumerable<string>? categoryIds = null,
-        IEnumerable<string>? nodeIds = null)
+        IEnumerable<string>? nodeIds = null,
+        IReadOnlyDictionary<string, string>? categoryNames = null)
     {
         _categoryIds = (categoryIds ?? []).ToList();
         _nodeIds = (nodeIds ?? []).ToList();
+        _categoryNames = categoryNames is null
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
+            : new Dictionary<string, string>(categoryNames, StringComparer.Ordinal);
     }
 
     public ValueTask<T?> GetValueAsync<T>(MioObject mioObject, IEavProperty<T> property)
@@ -45,12 +50,40 @@ internal sealed class RecordingMioDataProvider : IMioDataProvider
         => ValueTask.CompletedTask;
 
     public Task BatchLoadValueAsync(MioObject mioObject, HashSet<IAttachEavProperty> properties)
-        => Task.CompletedTask;
+    {
+        ApplyBatchLoad(mioObject, properties);
+        return Task.CompletedTask;
+    }
 
     public Task BatchLoadValueAsync(
         IReadOnlyCollection<MioObject> mioObjects,
         HashSet<IAttachEavProperty> properties)
-        => Task.CompletedTask;
+    {
+        foreach (var mioObject in mioObjects)
+        {
+            ApplyBatchLoad(mioObject, properties);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void ApplyBatchLoad(MioObject mioObject, HashSet<IAttachEavProperty> properties)
+    {
+        if (mioObject is not KeySenderCategory category)
+        {
+            return;
+        }
+
+        if (!properties.Contains(MioFeatureExtensions.NameProperty))
+        {
+            return;
+        }
+
+        if (_categoryNames.TryGetValue(category.Id, out var name))
+        {
+            category.SetName(name);
+        }
+    }
 
     public Task<bool> StoreAsync<T>(T mioObject) where T : MioObject
         => Task.FromResult(true);

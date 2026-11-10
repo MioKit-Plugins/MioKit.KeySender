@@ -55,6 +55,46 @@ public sealed class ConfigurationServiceEnsureCategoriesTests
         Assert.Same(live, categories[0]);
     }
 
+    [Fact]
+    public void KeySenderCategory_ctor_does_not_seed_placeholder_name()
+    {
+        using var designScope = DesignModeScope.Enter();
+
+        var category = new KeySenderCategory(Guid.NewGuid().ToString("D").ToUpperInvariant());
+
+        Assert.True(string.IsNullOrEmpty(category.GetName()));
+        Assert.NotEqual("分类", category.GetName());
+    }
+
+    [Fact]
+    public async Task EnsureCategories_batch_loads_persisted_name_onto_live_category()
+    {
+        using var designScope = DesignModeScope.Enter();
+
+        var plugin = new KeySenderPlugin();
+        var group = new KeySenderSearchGroup(KeySenderConst.SearchGroupId);
+        group.SetParent(plugin);
+
+        var categoryId = Guid.NewGuid().ToString("D").ToUpperInvariant();
+        var live = new KeySenderCategory(categoryId);
+        live.SetParent(group);
+
+        Assert.True(string.IsNullOrEmpty(live.GetName()));
+
+        var data = new RecordingMioDataProvider(
+            categoryIds: [categoryId],
+            categoryNames: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [categoryId] = "办公",
+            });
+        var service = new ConfigurationService(data, plugin);
+
+        await service.EnsureCategoriesAndMigrateAsync();
+
+        Assert.Same(live, Assert.Single(group.GetDescendants<KeySenderCategory>()));
+        Assert.Equal("办公", live.GetName());
+    }
+
     /// <summary>
     /// Forces Avalonia design-mode so MioObject uses DesignMioStore and SetParent skips EventBus.
     /// </summary>

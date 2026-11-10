@@ -65,7 +65,6 @@ export const useManagerStore = defineStore('keySenderManager', {
     listScope: LIST_SCOPE_ALL,
     selectedCategoryId: null,
     categories: [],
-    sidebarCollapsed: false,
     categoryDialog: {
       open: false,
       mode: 'create',
@@ -278,10 +277,6 @@ export const useManagerStore = defineStore('keySenderManager', {
       this.selectedIds = [];
       this.query = '';
       await this.refreshList();
-    },
-
-    toggleSidebarCollapsed() {
-      this.sidebarCollapsed = !this.sidebarCollapsed;
     },
 
     openCreateCategoryDialog() {
