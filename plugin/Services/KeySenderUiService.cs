@@ -41,7 +41,6 @@ public sealed class KeySenderUiService : IDisposable
     private long _runsSequence = 1;
     private long _categoriesSequence = 1;
     private string? _lastRunsFingerprint;
-    private long _lastHeldSequence = -1;
     private CancellationTokenSource? _pollCts;
     private bool _subscribedRecording;
     private bool _disposed;
@@ -63,8 +62,6 @@ public sealed class KeySenderUiService : IDisposable
     public event EventHandler<RecordingSnapshotDto>? RecordingChanged;
 
     public event EventHandler<RunPageDto>? RunsChanged;
-
-    public event EventHandler<HeldKeysSnapshotDto>? HeldKeysChanged;
 
     public event EventHandler<NodesChangedDto>? NodesChanged;
 
@@ -103,7 +100,7 @@ public sealed class KeySenderUiService : IDisposable
         StartPolling();
     }
 
-    /// <summary>Host-only: window closed — drop session, recording, and import preview. Does not ReleaseAll.</summary>
+    /// <summary>Host-only: window closed — drop session, recording, and import preview. Does not cancel playback.</summary>
     internal void OnWindowClosed()
     {
         string? sessionId;
@@ -175,7 +172,6 @@ public sealed class KeySenderUiService : IDisposable
             Categories = BuildCategoryList().Items,
             Nodes = nodes,
             Runs = BuildRunPage(),
-            HeldKeys = MapHeldKeys(_execution.GetHeldKeys()),
             FocusNodeId = focusNodeId,
         };
         return Task.FromResult(ApiResult<InitializeDataDto>.Success(data));
@@ -394,20 +390,6 @@ public sealed class KeySenderUiService : IDisposable
                     "分类内存在未结束的运行任务，不能删除。");
             }
 
-            var held = _execution.GetHeldKeys();
-            if (held.Keys.Any(k => childIds.Contains(k.SourceNodeId, StringComparer.Ordinal)))
-            {
-                var releaseSnap = await _execution.ReleaseAllAsync().ConfigureAwait(false);
-                RaiseHeldKeys(MapHeldKeys(releaseSnap));
-                RaiseRuns(BuildRunPage());
-                if (!releaseSnap.SenderAvailable && releaseSnap.Keys.Count > 0)
-                {
-                    return ApiResult<DeleteNodesResultDto>.Fail(
-                        ValidationCodes.InputCleanupFailed,
-                        "释放保持键失败，未删除分类。",
-                        details: MapHeldKeys(releaseSnap));
-                }
-            }
         }
 
         var result = await _configuration.DeleteCategoryAsync(categoryId).ConfigureAwait(false);
@@ -515,7 +497,6 @@ public sealed class KeySenderUiService : IDisposable
         var result = await _configuration
             .CreateInCategoryAsync(
                 request.Detail,
-                request.AcknowledgedWarningFingerprint,
                 request.CategoryId)
             .ConfigureAwait(false);
         if (!result.Ok || result.NodeId is null)
@@ -542,7 +523,7 @@ public sealed class KeySenderUiService : IDisposable
         }
 
         var result = await _configuration
-            .UpdateAsync(request.NodeId.Trim(), request.Detail, request.AcknowledgedWarningFingerprint)
+            .UpdateAsync(request.NodeId.Trim(), request.Detail)
             .ConfigureAwait(false);
         if (!result.Ok || result.NodeId is null)
         {
@@ -569,7 +550,6 @@ public sealed class KeySenderUiService : IDisposable
         var result = await _configuration
             .CopyToCategoryAsync(
                 request.NodeId.Trim(),
-                request.AcknowledgedWarningFingerprint,
                 request.CategoryId)
             .ConfigureAwait(false);
         if (!result.Ok || result.NodeId is null)
@@ -613,35 +593,6 @@ public sealed class KeySenderUiService : IDisposable
             return ApiResult<DeleteNodesResultDto>.Fail(
                 ValidationCodes.NodeInUse,
                 "存在未结束的运行任务，不能删除。");
-        }
-
-        var held = _execution.GetHeldKeys();
-        var heldFromTargets = held.Keys
-            .Where(k => ids.Contains(k.SourceNodeId, StringComparer.Ordinal))
-            .Select(k => k.SourceNodeId)
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-
-        if (heldFromTargets.Count > 0 && !request.ReleaseHeldKeys)
-        {
-            return ApiResult<DeleteNodesResultDto>.Fail(
-                ValidationCodes.HeldKeysConfirmationRequired,
-                "所选节点仍有保持键，需先确认释放",
-                details: new { nodeIds = heldFromTargets });
-        }
-
-        if (request.ReleaseHeldKeys)
-        {
-            var releaseSnap = await _execution.ReleaseAllAsync().ConfigureAwait(false);
-            RaiseHeldKeys(MapHeldKeys(releaseSnap));
-            RaiseRuns(BuildRunPage());
-            if (!releaseSnap.SenderAvailable && releaseSnap.Keys.Count > 0)
-            {
-                return ApiResult<DeleteNodesResultDto>.Fail(
-                    ValidationCodes.InputCleanupFailed,
-                    "释放保持键失败，未删除节点。",
-                    details: MapHeldKeys(releaseSnap));
-            }
         }
 
         var result = await _configuration.DeleteAsync(ids).ConfigureAwait(false);
@@ -821,40 +772,6 @@ public sealed class KeySenderUiService : IDisposable
             new CancelRunResultDto { CancellationRequested = requested }));
     }
 
-    public Task<ApiResult<HeldKeysSnapshotDto>> GetHeldKeysAsync(UiSessionRequest request)
-    {
-        if (TrySessionError(request, allowBind: false, out var error))
-        {
-            return Task.FromResult(Fail<HeldKeysSnapshotDto>(error!));
-        }
-
-        return Task.FromResult(ApiResult<HeldKeysSnapshotDto>.Success(
-            MapHeldKeys(_execution.GetHeldKeys())));
-    }
-
-    public async Task<ApiResult<HeldKeysSnapshotDto>> ReleaseHeldKeysAsync(UiSessionRequest request)
-    {
-        if (TrySessionError(request, allowBind: false, out var error))
-        {
-            return Fail<HeldKeysSnapshotDto>(error!);
-        }
-
-        var snap = await _execution.ReleaseAllAsync().ConfigureAwait(false);
-        var dto = MapHeldKeys(snap);
-        RaiseHeldKeys(dto);
-        RaiseRuns(BuildRunPage());
-
-        if (!snap.SenderAvailable && snap.Keys.Count > 0)
-        {
-            return ApiResult<HeldKeysSnapshotDto>.Fail(
-                ValidationCodes.InputCleanupFailed,
-                "释放保持键未完全成功",
-                details: dto);
-        }
-
-        return ApiResult<HeldKeysSnapshotDto>.Success(dto);
-    }
-
     public async Task<ApiResult<ImportPreviewDto>> PreviewImportAsync(UiSessionRequest request)
     {
         if (TrySessionError(request, allowBind: false, out var error))
@@ -913,8 +830,7 @@ public sealed class KeySenderUiService : IDisposable
         var result = await _transfer
             .CommitAsync(
                 _activeSessionId!,
-                request.PreviewId.Trim(),
-                request.AcknowledgedWarningFingerprint)
+                request.PreviewId.Trim())
             .ConfigureAwait(false);
 
         if (!result.Ok)
@@ -1370,12 +1286,6 @@ public sealed class KeySenderUiService : IDisposable
         RunsChanged?.Invoke(this, page);
     }
 
-    private void RaiseHeldKeys(HeldKeysSnapshotDto dto)
-    {
-        _lastHeldSequence = dto.SequenceNumber;
-        HeldKeysChanged?.Invoke(this, dto);
-    }
-
     private void RaiseRecording(RecordingSnapshotDto dto)
         => RecordingChanged?.Invoke(this, dto);
 
@@ -1470,11 +1380,7 @@ public sealed class KeySenderUiService : IDisposable
             }
         }
 
-        var held = MapHeldKeys(_execution.GetHeldKeys());
-        if (held.SequenceNumber != _lastHeldSequence)
-        {
-            RaiseHeldKeys(held);
-        }
+        _recording.CheckForeground();
 
         var runs = BuildRunPage();
         var fingerprint = FingerprintRuns(runs);
@@ -1587,22 +1493,6 @@ public sealed class KeySenderUiService : IDisposable
         FinishedAt = snap.FinishedAt,
         IsCancellationRequested = snap.IsCancellationRequested,
         Error = snap.Error,
-    };
-
-    private static HeldKeysSnapshotDto MapHeldKeys(HeldKeysSnapshot snap) => new()
-    {
-        SequenceNumber = snap.SequenceNumber,
-        Keys = snap.Keys.Select(static k => new HeldKeyItemDto
-        {
-            Key = k.Key,
-            Display = FormatKeyDisplay(k.Key),
-            SourceRunId = k.SourceRunId.ToString("D"),
-            SourceNodeId = k.SourceNodeId,
-            HeldSince = k.HeldSince,
-            Uncertain = k.Uncertain,
-        }).ToList(),
-        IsReleasing = snap.IsReleasing,
-        SenderAvailable = snap.SenderAvailable,
     };
 
     private static ImportPreviewDto MapImportPreview(ImportPreview preview) => new()

@@ -8,26 +8,23 @@ public sealed class FakeConfigurationService : IConfigurationService
 {
     public List<NodeWrite> Created { get; } = [];
 
-    public List<string?> AcknowledgedFingerprints { get; } = [];
 
-    public Func<NodeWrite, string?, ConfigurationResult>? CreateHandler { get; set; }
+    public Func<NodeWrite, ConfigurationResult>? CreateHandler { get; set; }
 
     public Dictionary<string, NodeDetail> Details { get; } = new(StringComparer.Ordinal);
 
     public Task<ConfigurationResult> CreateAsync(
         NodeWrite write,
-        string? acknowledgedWarningFingerprint,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        AcknowledgedFingerprints.Add(acknowledgedWarningFingerprint);
 
         if (CreateHandler is not null)
         {
-            return Task.FromResult(CreateHandler(write, acknowledgedWarningFingerprint));
+            return Task.FromResult(CreateHandler(write));
         }
 
-        var blocked = ConfigHelpers.EvaluateSaveGate(write, acknowledgedWarningFingerprint);
+        var blocked = ConfigHelpers.EvaluateSaveGate(write);
         if (blocked is not null)
         {
             return Task.FromResult(blocked);

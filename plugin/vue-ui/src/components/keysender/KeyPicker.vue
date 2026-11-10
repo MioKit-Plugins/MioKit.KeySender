@@ -20,15 +20,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue']);
 const store = useManagerStore();
 
-const groups = computed(() => {
-  const map = new Map();
-  for (const item of store.keyCatalog) {
-    const g = item.group || '其它';
-    if (!map.has(g)) map.set(g, []);
-    map.get(g).push(item);
-  }
-  return [...map.entries()];
-});
+const groups = computed(() => store.keyCatalogGroups);
 
 const label = computed(() =>
   props.modelValue ? keyDisplay(props.modelValue) || props.modelValue : '选择按键');

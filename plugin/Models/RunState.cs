@@ -6,7 +6,6 @@ public enum RunState
     Queued,
     Loading,
     BeforeDelay,
-    WaitingExternalKeys,
     EventDelay,
     Sending,
     AfterDelay,

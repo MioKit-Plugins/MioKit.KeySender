@@ -19,8 +19,7 @@ public sealed class ConfigurationServiceBuiltinTests
 
         var result = await service.UpdateAsync(
             KeySenderConst.BuiltInCopyNodeId.ToLowerInvariant(),
-            write,
-            acknowledgedWarningFingerprint: null);
+            write);
 
         Assert.False(result.Ok);
         Assert.Equal(ValidationCodes.BuiltinReadOnly, result.Code);

@@ -23,7 +23,6 @@ public static class ValidationCodes
     public const string UnmatchedKeyUp = "unmatched_keyup";
     public const string RepeatedKeyDown = "repeated_keydown";
 
-    public const string SequenceConfirmationRequired = "sequence_confirmation_required";
     public const string BuiltinReadOnly = "builtin_read_only";
     public const string BuiltinIdentityConflict = "builtin_identity_conflict";
     public const string CategoryNotFound = "category_not_found";
@@ -36,30 +35,22 @@ public static class ValidationCodes
     public const string DeleteIncomplete = "delete_incomplete";
     public const string ExecutionNotReady = "execution_not_ready";
     public const string WindowSessionClosed = "window_session_closed";
-    public const string HeldKeysConfirmationRequired = "held_keys_confirmation_required";
     public const string Cancelled = "cancelled";
 
     public const string QueueFull = "queue_full";
     public const string TargetMissing = "target_missing";
     public const string TargetInvalid = "target_invalid";
     public const string TargetFocusFailed = "target_focus_failed";
-    public const string KeysReleaseTimeout = "keys_release_timeout";
     public const string OutputHotkeyConflict = "output_hotkey_conflict";
     public const string InputSendFailed = "input_send_failed";
-    public const string InputCleanupFailed = "input_cleanup_failed";
-    public const string SenderUnavailable = "sender_unavailable";
     public const string PluginStopping = "plugin_stopping";
     public const string RecordingBusy = "recording_busy";
     public const string ExecutionBusy = "execution_busy";
-    public const string KeysHeld = "keys_held";
     public const string RecordingUnavailable = "recording_unavailable";
     public const string RecordingNotReady = "recording_not_ready";
-    public const string RecordingCleanupFailed = "recording_cleanup_failed";
 
     public const string RecordingInterrupted = "recording_interrupted";
     public const string RecordingLimitReached = "recording_limit_reached";
-    public const string RecordingReleaseTimeout = "recording_release_timeout";
-    public const string RecordingUnsupportedKey = "recording_unsupported_key";
 
     public const string InvalidFormat = "invalid_format";
     public const string UnsupportedFormatVersion = "unsupported_format_version";

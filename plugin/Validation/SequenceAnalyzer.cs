@@ -15,14 +15,6 @@ public static class SequenceAnalyzer
     private const string DeleteToken = "Delete";
 
     public static SequenceAnalysisResult AnalyzeSequence(NodeWrite write)
-        => AnalyzeSequence(write, initialHeldKeys: null);
-
-    /// <summary>
-    /// Runtime preview: hard-validate and CAD-check with ledger-held keys as the initial pressed set.
-    /// </summary>
-    public static SequenceAnalysisResult AnalyzeSequence(
-        NodeWrite write,
-        IEnumerable<string>? initialHeldKeys)
     {
         ArgumentNullException.ThrowIfNull(write);
 
@@ -63,17 +55,6 @@ public static class SequenceAnalyzer
 
         var seenIds = new HashSet<string>(StringComparer.Ordinal);
         var pressed = new HashSet<string>(StringComparer.Ordinal);
-        if (initialHeldKeys is not null)
-        {
-            foreach (var key in initialHeldKeys)
-            {
-                if (!string.IsNullOrEmpty(key))
-                {
-                    pressed.Add(key);
-                }
-            }
-        }
-
         var lastDownIndex = new Dictionary<string, int>(StringComparer.Ordinal);
         var cadReported = false;
         long delayTotal = write.BeforeDelayMs;

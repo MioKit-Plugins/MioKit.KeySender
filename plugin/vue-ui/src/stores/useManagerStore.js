@@ -10,6 +10,8 @@ import {
 } from '@/api/key-sender.js';
 import { emptyDraft, newEventId, toNodeWrite } from '@/api/types.js';
 
+const validationTimers = new WeakMap();
+
 function draftFingerprint(draft) {
   if (!draft) return '';
   return JSON.stringify(toNodeWrite(draft));
@@ -78,16 +80,11 @@ export const useManagerStore = defineStore('keySenderManager', {
     draftBaseline: '',
     draftLoading: false,
     draftGeneration: 0,
+    draftValidationSequence: 0,
     draftWarnings: [],
     draftErrors: [],
     saving: false,
 
-    heldKeys: {
-      sequenceNumber: 0,
-      keys: [],
-      isReleasing: false,
-      senderAvailable: true,
-    },
     runs: {
       sequenceNumber: 0,
       active: [],
@@ -97,18 +94,15 @@ export const useManagerStore = defineStore('keySenderManager', {
     recording: null,
     recordingFragment: null,
     recordingBusy: false,
+    recordingApplyPromise: null,
 
     dialogs: {
       dirtyLeave: false,
-      confirmSequence: false,
       deleteConfirm: false,
-      heldDelete: false,
       importPreview: false,
-      releaseAndRecord: false,
       deleteCategoryConfirm: false,
     },
     dirtyLeaveAction: null,
-    confirmContext: null,
     importPreview: null,
     pendingDeleteIds: [],
 
@@ -116,6 +110,18 @@ export const useManagerStore = defineStore('keySenderManager', {
   }),
 
   getters: {
+    recordingInProgress(state) {
+      return !!(state.recording || state.recordingBusy || state.recordingApplyPromise);
+    },
+    keyCatalogGroups(state) {
+      const groups = new Map();
+      for (const item of state.keyCatalog) {
+        const group = item.group || '其它';
+        if (!groups.has(group)) groups.set(group, []);
+        groups.get(group).push(item);
+      }
+      return [...groups.entries()];
+    },
     isDirty(state) {
       if (!state.draft) return false;
       return draftFingerprint(state.draft) !== state.draftBaseline;
@@ -136,9 +142,6 @@ export const useManagerStore = defineStore('keySenderManager', {
     },
     draftReadOnly(state) {
       return !state.draft || state.draft.isReadOnly || state.draft.isBuiltIn || !state.draft.canEdit;
-    },
-    heldCount(state) {
-      return state.heldKeys?.keys?.length ?? 0;
     },
     canCreateNode(state) {
       return state.listScope !== LIST_SCOPE_BUILTIN;
@@ -170,7 +173,6 @@ export const useManagerStore = defineStore('keySenderManager', {
       this._unsubs = [
         api.on('RecordingChanged', (snap) => this.onRecordingChanged(snap)),
         api.on('RunsChanged', (page) => this.onRunsChanged(page)),
-        api.on('HeldKeysChanged', (snap) => this.onHeldKeysChanged(snap)),
         api.on('NodesChanged', async () => {
           await this.refreshCategories();
           await this.refreshList();
@@ -196,7 +198,6 @@ export const useManagerStore = defineStore('keySenderManager', {
         this.keyCatalog = data.keyCatalog ?? [];
         this.categories = normalizeCategoryItems(data.categories);
         this.applyListPage(data.nodes);
-        this.heldKeys = data.heldKeys ?? this.heldKeys;
         this.runs = data.runs ?? this.runs;
         this.ready = true;
         if (data.focusNodeId) {
@@ -210,6 +211,8 @@ export const useManagerStore = defineStore('keySenderManager', {
     },
 
     dispose() {
+      this.cancelDraftValidation();
+      this.draftGeneration++;
       this._unsubs.forEach((u) => u?.());
       this._unsubs = [];
     },
@@ -375,21 +378,9 @@ export const useManagerStore = defineStore('keySenderManager', {
           const res = await api.CopyNodeAsync(withSession({
             nodeId,
             categoryId: targetCategoryId,
-            acknowledgedWarningFingerprint: null,
           }));
           if (!res.ok) {
-            if (res.error?.code === 'sequence_confirmation_required') {
-              this.confirmContext = {
-                mode: 'copy',
-                nodeId,
-                categoryId: targetCategoryId,
-                fingerprint: res.error.details?.warningFingerprint,
-                warnings: res.error.details?.warnings ?? [],
-              };
-              this.dialogs.confirmSequence = true;
-              return;
-            }
-            toast.error('复制失败', { description: res.error?.message });
+              toast.error('复制失败', { description: res.error?.message });
             return;
           }
         }
@@ -433,6 +424,7 @@ export const useManagerStore = defineStore('keySenderManager', {
     },
 
     async requestSelectNode(nodeId) {
+      if (!this.canLeaveRecording()) return;
       if (nodeId === this.selectedNodeId && this.draft?.nodeId === nodeId) return;
       if (this.isDirty) {
         this.dirtyLeaveAction = { type: 'select', nodeId };
@@ -443,21 +435,25 @@ export const useManagerStore = defineStore('keySenderManager', {
     },
 
     async selectNode(nodeId) {
+      if (!this.canLeaveRecording()) return;
+      this.cancelDraftValidation();
+      const generation = (this.draftGeneration += 1);
       this.selectedNodeId = nodeId;
+      this.draft = null;
+      this.draftBaseline = '';
+      this.draftWarnings = [];
+      this.draftErrors = [];
       if (!nodeId) {
-        this.draft = null;
-        this.draftBaseline = '';
-        this.draftWarnings = [];
-        this.draftErrors = [];
+        this.draftLoading = false;
         return;
       }
-      const generation = (this.draftGeneration += 1);
       this.draftLoading = true;
       try {
         const api = getKeySenderApi();
         const res = await api.GetDetailAsync(withSession({ nodeId }));
         if (generation !== this.draftGeneration) return;
         if (!res.ok) {
+          this.selectedNodeId = null;
           toast.error('加载详情失败', { description: res.error?.message });
           return;
         }
@@ -465,13 +461,19 @@ export const useManagerStore = defineStore('keySenderManager', {
         this.draftBaseline = draftFingerprint(this.draft);
         this.draftWarnings = [];
         this.draftErrors = [];
-        await this.validateDraftLocal();
+        this.scheduleDraftValidation();
+      } catch (error) {
+        if (generation === this.draftGeneration) {
+          this.selectedNodeId = null;
+          toast.error('加载详情失败', { description: error?.message ?? String(error) });
+        }
       } finally {
         if (generation === this.draftGeneration) this.draftLoading = false;
       }
     },
 
     async requestNewNode() {
+      if (!this.canLeaveRecording()) return;
       if (!this.canCreateNode) {
         toast.message('系统内置分类只读，请复制为自定义节点');
         return;
@@ -485,6 +487,10 @@ export const useManagerStore = defineStore('keySenderManager', {
     },
 
     startNewDraft() {
+      if (!this.canLeaveRecording()) return;
+      this.cancelDraftValidation();
+      this.draftGeneration++;
+      this.draftLoading = false;
       this.selectedNodeId = null;
       this.draft = emptyDraft({ name: '新节点' });
       this.draftBaseline = draftFingerprint(emptyDraft({ name: '__unset__' }));
@@ -501,6 +507,7 @@ export const useManagerStore = defineStore('keySenderManager', {
     patchDraft(partial) {
       if (!this.draft || this.draftReadOnly) return;
       Object.assign(this.draft, partial);
+      this.scheduleDraftValidation();
     },
 
     setEvents(events) {
@@ -509,19 +516,37 @@ export const useManagerStore = defineStore('keySenderManager', {
         version: this.draft.sequence?.version ?? 2,
         events,
       };
-      this.validateDraftLocal();
+      this.scheduleDraftValidation();
+    },
+
+    cancelDraftValidation() {
+      clearTimeout(validationTimers.get(this));
+      validationTimers.delete(this);
+      this.draftValidationSequence++;
+    },
+
+    scheduleDraftValidation() {
+      this.cancelDraftValidation();
+      validationTimers.set(this, setTimeout(() => {
+        validationTimers.delete(this);
+        void this.validateDraftLocal().catch(() => {});
+      }, 180));
     },
 
     async validateDraftLocal() {
+      this.cancelDraftValidation();
       if (!this.draft) {
         this.draftWarnings = [];
         this.draftErrors = [];
         return null;
       }
+      const draft = this.draft;
+      const sequence = this.draftValidationSequence;
       const api = getKeySenderApi();
       const res = await api.ValidateDraftAsync(withSession({
-        detail: toNodeWrite(this.draft),
+        detail: toNodeWrite(draft),
       }));
+      if (sequence !== this.draftValidationSequence || draft !== this.draft) return null;
       if (!res.ok) return null;
       this.draftErrors = res.data.errors ?? [];
       this.draftWarnings = res.data.warnings ?? [];
@@ -529,107 +554,84 @@ export const useManagerStore = defineStore('keySenderManager', {
     },
 
     async saveDraft({ continueAfter = false } = {}) {
-      if (!this.draft || this.saving) return false;
+      if (!this.draft || this.saving || this.draftLoading) return false;
+      if (!this.canLeaveRecording()) return false;
       if (this.draftReadOnly && this.draft.nodeId) {
         toast.message('内置节点只读');
         return false;
       }
-      this.saving = true;
-      try {
-        const validation = await this.validateDraftLocal();
-        if (!validation) return false;
-        if (!validation.valid) {
-          toast.error('无法保存', {
-            description: validation.errors?.[0]?.message ?? '存在硬错误',
-          });
-          return false;
-        }
-        if (validation.warnings?.length) {
-          this.confirmContext = {
-            mode: this.draft.nodeId ? 'update' : 'create',
-            fingerprint: validation.warningFingerprint,
-            warnings: validation.warnings,
-            continueAfter,
-          };
-          this.dialogs.confirmSequence = true;
-          return false;
-        }
-        return await this.commitSave(null, continueAfter);
-      } finally {
-        this.saving = false;
-      }
-    },
-
-    async commitSave(acknowledgedWarningFingerprint, continueAfter = false) {
       const api = getKeySenderApi();
-      const detail = toNodeWrite(this.draft);
+      const draft = this.draft;
+      const generation = this.draftGeneration;
+      const detail = toNodeWrite(draft);
+      const submittedFingerprint = draftFingerprint(detail);
+      const nodeId = draft.nodeId;
+      const categoryId = this.effectiveCreateCategoryId;
+      const leaveAction = continueAfter ? this.dirtyLeaveAction : null;
+      const isCurrentEditor = () => this.draft === draft && this.draftGeneration === generation;
+      // Create/Update perform authoritative validation. Background validation is editor feedback
+      // and must never cancel a save just because its response has been superseded.
+      this.cancelDraftValidation();
       this.saving = true;
       try {
         let res;
-        if (this.draft.nodeId) {
+        if (nodeId) {
           res = await api.UpdateNodeAsync(withSession({
-            nodeId: this.draft.nodeId,
+            nodeId,
             detail,
-            acknowledgedWarningFingerprint: acknowledgedWarningFingerprint ?? null,
           }));
         } else {
           res = await api.CreateNodeAsync(withSession({
             detail,
-            categoryId: this.effectiveCreateCategoryId,
-            acknowledgedWarningFingerprint: acknowledgedWarningFingerprint ?? null,
+            categoryId,
           }));
         }
 
         if (!res.ok) {
-          if (res.error?.code === 'sequence_confirmation_required') {
-            this.confirmContext = {
-              mode: this.draft.nodeId ? 'update' : 'create',
-              fingerprint: res.error.details?.warningFingerprint,
-              warnings: res.error.details?.warnings ?? [],
-              continueAfter,
-            };
-            this.dialogs.confirmSequence = true;
-            return false;
+          if (isCurrentEditor() && draftFingerprint(draft) === submittedFingerprint && res.error?.details) {
+            this.draftErrors = res.error.details.errors ?? [];
+            this.draftWarnings = res.error.details.warnings ?? [];
           }
           toast.error('保存失败', { description: res.error?.message });
           return false;
         }
 
+        if (isCurrentEditor()) {
+          const persisted = {
+            ...detail,
+            name: res.data.name ?? detail.name,
+            description: res.data.description ?? detail.description,
+          };
+          // Preserve edits made while the request was pending. Only the submitted DTO is saved.
+          if (draft.name === detail.name) draft.name = persisted.name;
+          if (draft.description === detail.description) draft.description = persisted.description;
+          for (const field of ['nodeId', 'isBuiltIn', 'isReadOnly', 'canEdit', 'canDelete']) {
+            if (res.data[field] !== undefined) draft[field] = res.data[field];
+          }
+          this.selectedNodeId = res.data.nodeId;
+          this.draftBaseline = draftFingerprint(persisted);
+          if (!this.isDirty) {
+            this.cancelDraftValidation();
+            this.draftErrors = [];
+            this.draftWarnings = [];
+          }
+        }
         toast.success('已保存配置');
-        this.draft.nodeId = res.data.nodeId;
-        this.draft.isBuiltIn = res.data.isBuiltIn;
-        this.draft.isReadOnly = res.data.isReadOnly;
-        this.draft.canEdit = res.data.canEdit;
-        this.draft.canDelete = res.data.canDelete;
-        this.selectedNodeId = res.data.nodeId;
-        this.draftBaseline = draftFingerprint(this.draft);
-        await this.refreshList();
-        if (continueAfter) await this.resumeDirtyLeave();
+        try { await this.refreshList(); }
+        catch (error) {
+          toast.error('配置已保存，但列表刷新失败', { description: error?.message ?? String(error) });
+        }
+        if (leaveAction && isCurrentEditor() && this.dirtyLeaveAction === leaveAction) {
+          if (!this.isDirty) await this.resumeDirtyLeave();
+          else toast.message('保存期间有新的修改，请再次保存后继续');
+        }
         return true;
+      } catch (error) {
+        toast.error('保存失败', { description: error?.message ?? String(error) });
+        return false;
       } finally {
         this.saving = false;
       }
-    },
-
-    async confirmSequenceSave() {
-      const ctx = this.confirmContext;
-      this.dialogs.confirmSequence = false;
-      if (!ctx) return;
-      if (ctx.mode === 'copy') {
-        await this.commitCopy(ctx.nodeId, ctx.fingerprint);
-        return;
-      }
-      if (ctx.mode === 'import') {
-        await this.commitImport(ctx.fingerprint);
-        return;
-      }
-      await this.commitSave(ctx.fingerprint, ctx.continueAfter);
-      this.confirmContext = null;
-    },
-
-    cancelSequenceConfirm() {
-      this.dialogs.confirmSequence = false;
-      this.confirmContext = null;
     },
 
     async resumeDirtyLeave() {
@@ -641,13 +643,17 @@ export const useManagerStore = defineStore('keySenderManager', {
       if (action.type === 'new') this.startNewDraft();
       if (action.type === 'import') await this.openImport();
       if (action.type === 'close') this.closeEditor();
+      if (action.type === 'copy') await this.copyNode(action.nodeId, action.categoryId);
+    },
+
+    canLeaveRecording() {
+      if (!this.recordingInProgress) return true;
+      toast.message('请先停止或取消录制');
+      return false;
     },
 
     requestCloseEditor() {
-      if (this.recording) {
-        toast.message('请先停止或取消录制');
-        return;
-      }
+      if (!this.canLeaveRecording()) return;
       if (this.isDirty) {
         this.dirtyLeaveAction = { type: 'close' };
         this.dialogs.dirtyLeave = true;
@@ -657,6 +663,9 @@ export const useManagerStore = defineStore('keySenderManager', {
     },
 
     closeEditor() {
+      this.cancelDraftValidation();
+      this.draftGeneration++;
+      this.draftLoading = false;
       this.draft = null;
       this.draftBaseline = '';
       this.draftWarnings = [];
@@ -667,10 +676,7 @@ export const useManagerStore = defineStore('keySenderManager', {
     },
 
     async dirtyLeaveSave() {
-      const ok = await this.saveDraft({ continueAfter: true });
-      if (ok) {
-        /* commitSave handles continue */
-      }
+      await this.saveDraft({ continueAfter: true });
     },
 
     dirtyLeaveDiscard() {
@@ -690,42 +696,18 @@ export const useManagerStore = defineStore('keySenderManager', {
     },
 
     async copyNode(nodeId, categoryId = null) {
+      if (!this.canLeaveRecording()) return;
+      if (this.isDirty) {
+        this.dirtyLeaveAction = { type: 'copy', nodeId, categoryId };
+        this.dialogs.dirtyLeave = true;
+        return;
+      }
+      const generation = this.draftGeneration;
       const api = getKeySenderApi();
       const res = await api.CopyNodeAsync(withSession({
         nodeId,
         categoryId: categoryId ?? this.effectiveCreateCategoryId,
-        acknowledgedWarningFingerprint: null,
       }));
-      if (!res.ok) {
-        if (res.error?.code === 'sequence_confirmation_required') {
-          this.confirmContext = {
-            mode: 'copy',
-            nodeId,
-            categoryId: categoryId ?? this.effectiveCreateCategoryId,
-            fingerprint: res.error.details?.warningFingerprint,
-            warnings: res.error.details?.warnings ?? [],
-          };
-          this.dialogs.confirmSequence = true;
-          return;
-        }
-        toast.error('复制失败', { description: res.error?.message });
-        return;
-      }
-      toast.success('已复制为自定义节点');
-      await this.refreshCategories();
-      await this.refreshList();
-      await this.selectNode(res.data.nodeId);
-    },
-
-    async commitCopy(nodeId, fingerprint) {
-      const api = getKeySenderApi();
-      const categoryId = this.confirmContext?.categoryId ?? this.effectiveCreateCategoryId;
-      const res = await api.CopyNodeAsync(withSession({
-        nodeId,
-        categoryId,
-        acknowledgedWarningFingerprint: fingerprint,
-      }));
-      this.confirmContext = null;
       if (!res.ok) {
         toast.error('复制失败', { description: res.error?.message });
         return;
@@ -733,7 +715,7 @@ export const useManagerStore = defineStore('keySenderManager', {
       toast.success('已复制为自定义节点');
       await this.refreshCategories();
       await this.refreshList();
-      await this.selectNode(res.data.nodeId);
+      if (generation === this.draftGeneration) await this.requestSelectNode(res.data.nodeId);
     },
 
     requestDelete(ids) {
@@ -742,20 +724,14 @@ export const useManagerStore = defineStore('keySenderManager', {
       this.dialogs.deleteConfirm = true;
     },
 
-    async confirmDelete({ releaseHeldKeys = false } = {}) {
+    async confirmDelete() {
       const api = getKeySenderApi();
       const ids = this.pendingDeleteIds;
       this.dialogs.deleteConfirm = false;
-      this.dialogs.heldDelete = false;
       const res = await api.DeleteNodesAsync(withSession({
         nodeIds: ids,
-        releaseHeldKeys,
       }));
       if (!res.ok) {
-        if (res.error?.code === 'held_keys_confirmation_required') {
-          this.dialogs.heldDelete = true;
-          return;
-        }
         toast.error('删除失败', { description: res.error?.message });
         return;
       }
@@ -771,16 +747,12 @@ export const useManagerStore = defineStore('keySenderManager', {
     },
 
     async beginRecording() {
+      if (this.draftReadOnly || this.draftLoading || this.recordingInProgress) return;
       const api = getKeySenderApi();
       this.recordingBusy = true;
       try {
         const res = await api.BeginRecordingAsync(withSession());
         if (!res.ok) {
-          const code = res.error?.code;
-          if (code === 'keys_held' || code === 'execution_busy') {
-            this.dialogs.releaseAndRecord = true;
-            return;
-          }
           toast.error('无法开始录制', { description: res.error?.message });
           return;
         }
@@ -788,17 +760,8 @@ export const useManagerStore = defineStore('keySenderManager', {
         this.recordingFragment = null;
       } finally {
         this.recordingBusy = false;
+        if (this.recording?.state === 'review') await this.finishRecording();
       }
-    },
-
-    cancelReleaseAndRecord() {
-      this.dialogs.releaseAndRecord = false;
-    },
-
-    async confirmReleaseAndRecord() {
-      this.dialogs.releaseAndRecord = false;
-      await this.releaseHeldKeys();
-      await this.beginRecording();
     },
 
     async stopRecording() {
@@ -814,23 +777,7 @@ export const useManagerStore = defineStore('keySenderManager', {
           return;
         }
         this.recording = res.data;
-        const frag = await api.GetRecordingFragmentAsync(withSession({
-          recordingId: this.recording.recordingId,
-        }));
-        if (frag.ok) this.recordingFragment = frag.data;
-
-        // 停止后直接全量替换草稿，不再经过「应用」步骤。
-        if (this.recording?.state === 'review' && !this.draftReadOnly) {
-          const count = this.recordingFragment?.events?.length
-            ?? this.recording?.eventCount
-            ?? 0;
-          if (count > 0) {
-            await this.doApplyRecording();
-          } else {
-            await this.cancelRecording();
-            toast.message('未录到按键');
-          }
-        }
+        await this.finishRecording();
       } finally {
         this.recordingBusy = false;
       }
@@ -858,7 +805,10 @@ export const useManagerStore = defineStore('keySenderManager', {
     async doApplyRecording() {
       const api = getKeySenderApi();
       const recordingId = this.recording.recordingId;
+      const draft = this.draft;
+      const generation = this.draftGeneration;
       const res = await api.ApplyRecordingAsync(withSession({ recordingId }));
+      if (draft !== this.draft || generation !== this.draftGeneration) return;
       if (!res.ok) {
         toast.error('应用录制失败', { description: res.error?.message });
         return;
@@ -878,7 +828,6 @@ export const useManagerStore = defineStore('keySenderManager', {
       this.setEvents(incoming);
       this.recording = null;
       this.recordingFragment = null;
-      toast.message('已写入草稿');
     },
 
     injectMockKey(type, key) {
@@ -887,19 +836,35 @@ export const useManagerStore = defineStore('keySenderManager', {
     },
 
     onRecordingChanged(snap) {
-      this.recording = snap;
+      if (!snap) return;
+      if (this.recording?.recordingId === snap.recordingId
+        && (snap.sequenceNumber ?? 0) < (this.recording.sequenceNumber ?? 0)) return;
+      this.recording = ['idle', 'cancelled', 'failed'].includes(snap.state) ? null : snap;
+      if (snap.state === 'review' && !this.recordingBusy) void this.finishRecording();
+    },
+
+    async finishRecording() {
+      if (this.recordingApplyPromise) return this.recordingApplyPromise;
+      if (this.recording?.state !== 'review' || this.draftReadOnly) return;
+      this.recordingApplyPromise = (async () => {
+        try {
+          if (this.recording.eventCount > 0) await this.doApplyRecording();
+          else {
+            await this.cancelRecording();
+            toast.message('未录到按键');
+          }
+        } catch (error) {
+          toast.error('应用录制失败', { description: error?.message ?? String(error) });
+        }
+      })();
+      try { await this.recordingApplyPromise; }
+      finally { this.recordingApplyPromise = null; }
     },
 
     onRunsChanged(page) {
       if (!page) return;
       if ((page.sequenceNumber ?? 0) < (this.runs.sequenceNumber ?? 0)) return;
       this.runs = page;
-    },
-
-    onHeldKeysChanged(snap) {
-      if (!snap) return;
-      if ((snap.sequenceNumber ?? 0) < (this.heldKeys.sequenceNumber ?? 0)) return;
-      this.heldKeys = snap;
     },
 
     async cancelRun(runId) {
@@ -912,22 +877,6 @@ export const useManagerStore = defineStore('keySenderManager', {
       toast.message('已请求取消');
       const runs = await api.GetRunsAsync(withSession());
       if (runs.ok) this.runs = runs.data;
-    },
-
-    async releaseHeldKeys() {
-      const api = getKeySenderApi();
-      const res = await api.ReleaseHeldKeysAsync(withSession());
-      if (!res.ok) {
-        toast.error('释放失败', { description: res.error?.message });
-        if (res.error?.details) {
-          /* keep panel usable */
-        }
-        const held = await api.GetHeldKeysAsync(withSession());
-        if (held.ok) this.heldKeys = held.data;
-        return;
-      }
-      this.heldKeys = res.data;
-      toast.success('已停止后续任务并释放保持键');
     },
 
     async openImport() {
@@ -947,29 +896,18 @@ export const useManagerStore = defineStore('keySenderManager', {
       this.dialogs.importPreview = true;
     },
 
-    async commitImport(fingerprint = null) {
+    async commitImport() {
       if (!this.importPreview) return;
       const api = getKeySenderApi();
       const res = await api.CommitImportAsync(withSession({
         previewId: this.importPreview.previewId,
-        acknowledgedWarningFingerprint: fingerprint,
       }));
       if (!res.ok) {
-        if (res.error?.code === 'sequence_confirmation_required') {
-          this.confirmContext = {
-            mode: 'import',
-            fingerprint: res.error.details?.warningFingerprint,
-            warnings: res.error.details?.warnings ?? [],
-          };
-          this.dialogs.confirmSequence = true;
-          return;
-        }
         toast.error('导入失败', { description: res.error?.message });
         return;
       }
       this.dialogs.importPreview = false;
       this.importPreview = null;
-      this.confirmContext = null;
       toast.success(`已导入 ${res.data.createdItems?.length ?? 0} 个节点`);
       await this.refreshCategories();
       await this.refreshList();

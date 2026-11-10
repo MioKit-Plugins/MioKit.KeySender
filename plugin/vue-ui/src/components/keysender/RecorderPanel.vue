@@ -12,9 +12,7 @@ const stateLabel = computed(() => {
   const s = store.recording?.state;
   if (!s) return '空闲';
   const map = {
-    preparing: '准备中',
     recording: '录制中',
-    draining: '排空中',
     review: '写入中',
     cancelled: '已取消',
     failed: '失败',
@@ -24,8 +22,7 @@ const stateLabel = computed(() => {
 
 const isRecording = computed(() =>
   store.recording?.state === 'recording'
-  || store.recording?.state === 'preparing'
-  || store.recording?.state === 'draining');
+);
 
 const canStart = computed(() =>
   !store.draftReadOnly && !store.recording && !store.recordingBusy);

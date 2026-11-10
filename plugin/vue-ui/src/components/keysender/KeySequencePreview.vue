@@ -12,8 +12,10 @@ const props = defineProps({
 
 const summary = computed(() => chordSummary(props.events));
 
+const PREVIEW_LIMIT = 60;
+const eventCount = computed(() => props.events?.length ?? 0);
 const steps = computed(() =>
-  (props.events ?? []).map((ev, index) => ({
+  (props.events ?? []).slice(0, PREVIEW_LIMIT).map((ev, index) => ({
     id: ev.eventId || `${ev.key}-${ev.type}-${index}`,
     label: keyCapLabel(ev.key),
     isDown: ev.type === 'keyDown',
@@ -49,9 +51,12 @@ const parts = computed(() => {
           </template>
         </template>
         <span v-else class="text-sm text-muted-foreground">
-          {{ steps.length }} 个事件
+          {{ eventCount }} 个事件
         </span>
       </div>
+      <p v-if="eventCount > PREVIEW_LIMIT" class="mt-3 text-xs text-muted-foreground">
+        已显示前 {{ PREVIEW_LIMIT }} 条，共 {{ eventCount }} 条事件。完整序列可在「详细」中查看和编辑。
+      </p>
     </div>
 
     <div class="px-4 py-4">

@@ -34,24 +34,10 @@ public class KeySenderPlugin : PluginBase, IPluginConfigWindowFeature,
         Context.Logger.Information("模拟按键插件已启动");
     }
 
-    protected override async Task StopCoreAsync(CancellationToken cancellationToken)
+    protected override Task StopCoreAsync(CancellationToken cancellationToken)
     {
-        try
-        {
-            var container = Container;
-            if (container is not null
-                && container.TryResolve<Services.IKeySenderExecutionService>(out var execution))
-            {
-                // Do not register a new IMioTaskService job here — stop drain may already be closed.
-                await execution.ReleaseAllAsync(cancellationToken).ConfigureAwait(false);
-            }
-        }
-        catch (Exception ex)
-        {
-            Context.Logger.Warning(ex, "模拟按键停止时释放保持键失败");
-        }
-
         Context.Logger.Information("模拟按键插件已停止");
+        return Task.CompletedTask;
     }
 
     public override ValueTask<PluginDataCleanupPlan> CreateDataCleanupPlanAsync(

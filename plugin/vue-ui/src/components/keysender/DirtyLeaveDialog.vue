@@ -38,7 +38,7 @@ const open = computed({
         >
           保存并继续
         </Button>
-        <Button variant="secondary" class="min-w-28" @click="store.dirtyLeaveDiscard()">
+        <Button variant="secondary" class="min-w-28" :disabled="store.saving" @click="store.dirtyLeaveDiscard()">
           放弃修改
         </Button>
         <Button variant="outline" class="min-w-28" @click="store.dirtyLeaveStay()">

@@ -21,8 +21,8 @@ public interface IKeyboardHookSource : IDisposable
     void Start(Func<RawKeyboardEvent, KeyboardHookAction> handler);
 
     /// <summary>
-    /// Uninstall / stop delivery. Must not be called from inside the hook callback on the same thread
-    /// that would deadlock waiting for itself (NativeKeyboardHook posts stop to its message loop).
+    /// Stop delivery. On the callback thread request exit without waiting for itself;
+    /// other callers wait for the native thread to release its resources.
     /// </summary>
     void Stop();
 }

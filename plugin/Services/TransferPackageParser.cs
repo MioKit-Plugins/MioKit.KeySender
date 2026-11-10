@@ -40,6 +40,9 @@ public static class TransferPackageParser
                 $"Package exceeds {KeySenderConst.TransferMaxBytes} bytes.");
         }
 
+        // Hash the original file bytes, just as the commit-time file check does.
+        var sha = SHA256.HashData(utf8Json);
+
         // Allow UTF-8 BOM.
         if (utf8Json.Length >= 3
             && utf8Json[0] == 0xEF
@@ -53,8 +56,6 @@ public static class TransferPackageParser
         {
             return TransferParseResult.Fail(ValidationCodes.InvalidFormat, "Empty package.");
         }
-
-        var sha = SHA256.HashData(utf8Json);
 
         JsonDocument doc;
         try

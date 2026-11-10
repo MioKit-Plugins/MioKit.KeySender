@@ -132,14 +132,14 @@ public sealed class TransferServiceTests
         Assert.True(preview.Ok);
         Assert.False(preview.Preview!.CanImport);
 
-        var commit = await transfer.CommitAsync("win", preview.Preview.PreviewId, acknowledgedWarningFingerprint: null);
+        var commit = await transfer.CommitAsync("win", preview.Preview.PreviewId);
         Assert.False(commit.Ok);
         Assert.Equal(ValidationCodes.ImportInvalid, commit.Code);
         Assert.Empty(config.Created);
     }
 
     [Fact]
-    public async Task Warning_fingerprint_required_for_down_only_import()
+    public async Task Down_only_import_does_not_require_confirmation()
     {
         var config = new FakeConfigurationService();
         var transfer = new TransferService(config);
@@ -164,19 +164,44 @@ public sealed class TransferServiceTests
         Assert.True(preview.Preview!.CanImport);
         Assert.False(string.IsNullOrEmpty(preview.Preview.WarningFingerprint));
 
-        var denied = await transfer.CommitAsync("win", preview.Preview.PreviewId, acknowledgedWarningFingerprint: null);
-        Assert.False(denied.Ok);
-        Assert.Equal(ValidationCodes.SequenceConfirmationRequired, denied.Code);
-        Assert.Empty(config.Created);
-
         var allowed = await transfer.CommitAsync(
             "win",
-            preview.Preview.PreviewId,
-            acknowledgedWarningFingerprint: preview.Preview.WarningFingerprint);
+            preview.Preview.PreviewId);
         Assert.True(allowed.Ok);
         Assert.Single(config.Created);
         Assert.Equal("LeftShift", config.Created[0].Sequence.Events[0].Key);
         Assert.Equal("keyDown", config.Created[0].Sequence.Events[0].Type);
+    }
+
+    [Fact]
+    public async Task Bom_file_imports_when_original_bytes_are_unchanged()
+    {
+        var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(ValidV2Package)).ToArray();
+        var config = new FakeConfigurationService();
+        var transfer = new TransferService(config);
+        var preview = transfer.PreviewFromBytes("window", bytes).Preview!;
+        Assert.True((await transfer.CommitAsync("window", preview.PreviewId, revalidateBytes: bytes)).Ok);
+
+        var path = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllBytesAsync(path, bytes);
+            preview = transfer.PreviewFromBytes("window", bytes, path).Preview!;
+            Assert.True((await transfer.CommitAsync("window", preview.PreviewId)).Ok);
+        }
+        finally { File.Delete(path); }
+        Assert.Equal(6, config.Created.Count);
+    }
+
+    [Fact]
+    public async Task Changed_bytes_are_still_rejected_after_bom_fix()
+    {
+        var transfer = new TransferService(new FakeConfigurationService());
+        var bytes = Encoding.UTF8.GetBytes(ValidV2Package);
+        var preview = transfer.PreviewFromBytes("window", bytes).Preview!;
+        var changed = bytes.Concat(new byte[] { 0x20 }).ToArray();
+        Assert.Equal(ValidationCodes.ImportChanged,
+            (await transfer.CommitAsync("window", preview.PreviewId, revalidateBytes: changed)).Code);
     }
 
     [Fact]

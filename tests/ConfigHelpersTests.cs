@@ -9,7 +9,7 @@ namespace MioKit.KeySender.Tests;
 public sealed class ConfigHelpersTests
 {
     [Fact]
-    public void Fingerprint_confirmation_required_then_accepts_matching_fingerprint()
+    public void Unpaired_keydown_can_be_saved_without_confirmation()
     {
         var write = new NodeWrite
         {
@@ -33,19 +33,7 @@ public sealed class ConfigHelpersTests
             },
         };
 
-        var without = ConfigHelpers.EvaluateSaveGate(write, acknowledgedWarningFingerprint: null);
-        Assert.NotNull(without);
-        Assert.Equal(ValidationCodes.SequenceConfirmationRequired, without!.Code);
-        Assert.NotNull(without.Analysis);
-        Assert.True(without.Analysis!.HasWarnings);
-
-        var fingerprint = without.Analysis.WarningFingerprint;
-        var withMismatch = ConfigHelpers.EvaluateSaveGate(write, "deadbeef");
-        Assert.NotNull(withMismatch);
-        Assert.Equal(ValidationCodes.SequenceConfirmationRequired, withMismatch!.Code);
-
-        var withMatch = ConfigHelpers.EvaluateSaveGate(write, fingerprint);
-        Assert.Null(withMatch);
+        Assert.Null(ConfigHelpers.EvaluateSaveGate(write));
     }
 
     [Fact]

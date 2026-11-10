@@ -5,8 +5,7 @@ using KeySender.Validation;
 namespace KeySender.Services;
 
 /// <summary>
-/// Config CRUD gate: validate, confirm fingerprint, persist, parent, publish.
-/// Does not hold the gate while waiting for user confirmation.
+/// Config CRUD gate: validate structure, persist, parent, publish.
 /// </summary>
 public sealed class ConfigurationService : IConfigurationService
 {
@@ -16,7 +15,7 @@ public sealed class ConfigurationService : IConfigurationService
 
     /// <param name="plugin">
     /// Required for create/parent/tree recovery. May be null in unit tests that only exercise
-    /// early builtin/confirm rejection paths.
+    /// early builtin/validation rejection paths.
     /// </param>
     public ConfigurationService(IMioDataProvider data, KeySenderPlugin? plugin)
     {
@@ -26,20 +25,18 @@ public sealed class ConfigurationService : IConfigurationService
 
     public Task<ConfigurationResult> CreateAsync(
         NodeWrite write,
-        string? acknowledgedWarningFingerprint,
         CancellationToken cancellationToken = default)
-        => CreateInCategoryAsync(write, acknowledgedWarningFingerprint, categoryId: null, cancellationToken);
+        => CreateInCategoryAsync(write, categoryId: null, cancellationToken);
 
     public async Task<ConfigurationResult> CreateInCategoryAsync(
         NodeWrite write,
-        string? acknowledgedWarningFingerprint,
         string? categoryId,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(write);
         NormalizeWrite(write);
 
-        var blocked = ConfigHelpers.EvaluateSaveGate(write, acknowledgedWarningFingerprint);
+        var blocked = ConfigHelpers.EvaluateSaveGate(write);
         if (blocked is not null)
         {
             return blocked;
@@ -48,8 +45,8 @@ public sealed class ConfigurationService : IConfigurationService
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            // Re-check after entering gate (content may be same; fingerprint still required).
-            blocked = ConfigHelpers.EvaluateSaveGate(write, acknowledgedWarningFingerprint);
+            // Re-check after entering the write gate.
+            blocked = ConfigHelpers.EvaluateSaveGate(write);
             if (blocked is not null)
             {
                 return blocked;
@@ -92,7 +89,7 @@ public sealed class ConfigurationService : IConfigurationService
                 await _data.UpdateParentsAsync(
                         new Dictionary<string, string?> { [id] = parent.Id })
                     .ConfigureAwait(false);
-                RefreshLightFields(node, write);
+                PublishCommittedValues(node, write);
                 node.SetParent(parent);
             }
             catch (Exception ex)
@@ -119,7 +116,6 @@ public sealed class ConfigurationService : IConfigurationService
     public async Task<ConfigurationResult> UpdateAsync(
         string nodeId,
         NodeWrite write,
-        string? acknowledgedWarningFingerprint,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(nodeId);
@@ -132,7 +128,7 @@ public sealed class ConfigurationService : IConfigurationService
             return builtin;
         }
 
-        var blocked = ConfigHelpers.EvaluateSaveGate(write, acknowledgedWarningFingerprint);
+        var blocked = ConfigHelpers.EvaluateSaveGate(write);
         if (blocked is not null)
         {
             return blocked;
@@ -147,7 +143,7 @@ public sealed class ConfigurationService : IConfigurationService
                 return builtin;
             }
 
-            blocked = ConfigHelpers.EvaluateSaveGate(write, acknowledgedWarningFingerprint);
+            blocked = ConfigHelpers.EvaluateSaveGate(write);
             if (blocked is not null)
             {
                 return blocked;
@@ -176,7 +172,7 @@ public sealed class ConfigurationService : IConfigurationService
                 return ConfigurationResult.Fail(ValidationCodes.PersistenceFailed, ex.Message, nodeId: nodeId);
             }
 
-            RefreshLightFields(live, write);
+            PublishCommittedValues(live, write);
             return ConfigurationResult.Success(live.Id, ConfigHelpers.ToDetail(live.Id, write, isBuiltIn: false));
         }
         finally
@@ -258,13 +254,11 @@ public sealed class ConfigurationService : IConfigurationService
 
     public Task<ConfigurationResult> CopyAsync(
         string sourceNodeId,
-        string? acknowledgedWarningFingerprint,
         CancellationToken cancellationToken = default)
-        => CopyToCategoryAsync(sourceNodeId, acknowledgedWarningFingerprint, categoryId: null, cancellationToken);
+        => CopyToCategoryAsync(sourceNodeId, categoryId: null, cancellationToken);
 
     public async Task<ConfigurationResult> CopyToCategoryAsync(
         string sourceNodeId,
-        string? acknowledgedWarningFingerprint,
         string? categoryId,
         CancellationToken cancellationToken = default)
     {
@@ -282,10 +276,8 @@ public sealed class ConfigurationService : IConfigurationService
         source.Name = ConfigHelpers.BuildCopyName(source.Name);
         source.Sequence = BuiltinSequenceFactory.CloneWithFreshEventIds(source.Sequence);
 
-        // Copy always needs fresh confirmation for current warnings.
         return await CreateInCategoryAsync(
                 source,
-                acknowledgedWarningFingerprint,
                 categoryId,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -940,10 +932,27 @@ public sealed class ConfigurationService : IConfigurationService
         }
     }
 
-    private static void RefreshLightFields(KeySenderNode node, NodeWrite write)
+    private static void PublishCommittedValues(KeySenderNode node, NodeWrite write)
     {
+        // SaveObjectsAsync commits its explicit property dictionary to storage. The attached
+        // node may still expose old Store entries, including fields with CachePolicy.None.
+        // Publish only after persistence succeeds so a failed save never changes live values.
         node.SetName(write.Name);
         node.SetDescription(write.Description);
+        node.SetBeforeDelayMs(write.BeforeDelayMs);
+        node.SetAfterDelayMs(write.AfterDelayMs);
+        // The live value represents committed data, not the caller's mutable request DTO.
+        node.SetSequence(new KeyboardSequence
+        {
+            Version = write.Sequence.Version,
+            Events = write.Sequence.Events.Select(ev => new KeyboardEvent
+            {
+                EventId = ev.EventId,
+                Type = ev.Type,
+                Key = ev.Key,
+                DelayBeforeMs = ev.DelayBeforeMs,
+            }).ToList(),
+        });
     }
 
     private static Dictionary<IAttachEavProperty, object> BuildBusinessPropertyValues(NodeWrite write)

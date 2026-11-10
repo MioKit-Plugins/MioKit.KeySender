@@ -5,18 +5,16 @@ using KeySender.Validation;
 namespace KeySender.Services;
 
 /// <summary>
-/// Pure helpers for confirmation fingerprints, built-in guards, and copy naming.
+/// Pure helpers for structural validation, built-in guards, and copy naming.
 /// </summary>
 public static class ConfigHelpers
 {
     /// <summary>
     /// Returns null when save may proceed; otherwise a failure result
-    /// (<see cref="ValidationCodes.ValidationFailed"/> or
-    /// <see cref="ValidationCodes.SequenceConfirmationRequired"/>).
+    /// (<see cref="ValidationCodes.ValidationFailed"/>).
     /// </summary>
     public static ConfigurationResult? EvaluateSaveGate(
-        NodeWrite write,
-        string? acknowledgedWarningFingerprint)
+        NodeWrite write)
     {
         ArgumentNullException.ThrowIfNull(write);
 
@@ -26,18 +24,6 @@ public static class ConfigHelpers
             return ConfigurationResult.Fail(
                 ValidationCodes.ValidationFailed,
                 "Hard validation failed.",
-                analysis);
-        }
-
-        if (analysis.HasWarnings
-            && !string.Equals(
-                acknowledgedWarningFingerprint,
-                analysis.WarningFingerprint,
-                StringComparison.Ordinal))
-        {
-            return ConfigurationResult.Fail(
-                ValidationCodes.SequenceConfirmationRequired,
-                "Sequence has confirmable warnings; matching fingerprint required.",
                 analysis);
         }
 

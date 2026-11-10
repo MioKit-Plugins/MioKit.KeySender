@@ -7,7 +7,7 @@ public sealed class FakeInputActivityGate : IInputActivityGate
 {
     public bool AllowReserve { get; set; } = true;
 
-    public string? RejectCode { get; set; } = ValidationCodes.KeysHeld;
+    public string? RejectCode { get; set; } = ValidationCodes.ExecutionBusy;
 
     public int ReserveCalls { get; private set; }
 

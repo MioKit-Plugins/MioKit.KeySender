@@ -26,8 +26,7 @@ public sealed class NativeKeyboardHook : IKeyboardHookSource
     private IntPtr _hook = IntPtr.Zero;
     private LowLevelKeyboardProc? _proc;
     private Func<RawKeyboardEvent, KeyboardHookAction>? _handler;
-    private ManualResetEventSlim? _started;
-    private Exception? _startError;
+    private bool _stopRequested;
     private bool _disposed;
 
     public bool IsRunning
@@ -44,19 +43,18 @@ public sealed class NativeKeyboardHook : IKeyboardHookSource
     public void Start(Func<RawKeyboardEvent, KeyboardHookAction> handler)
     {
         ArgumentNullException.ThrowIfNull(handler);
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
+        var started = new TaskCompletionSource<Exception?>(TaskCreationOptions.RunContinuationsAsynchronously);
         lock (_sync)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             if (_hook != IntPtr.Zero || _thread is { IsAlive: true })
             {
                 throw new InvalidOperationException("Native keyboard hook is already running.");
             }
 
             _handler = handler;
-            _startError = null;
-            _started = new ManualResetEventSlim(false);
-            _thread = new Thread(ThreadMain)
+            _stopRequested = false;
+            _thread = new Thread(() => ThreadMain(started))
             {
                 IsBackground = true,
                 Name = "KeySender.NativeKeyboardHook",
@@ -65,15 +63,14 @@ public sealed class NativeKeyboardHook : IKeyboardHookSource
             _thread.Start();
         }
 
-        if (!_started.Wait(TimeSpan.FromSeconds(5)))
+        if (!started.Task.Wait(TimeSpan.FromSeconds(5)))
         {
             Stop();
             throw new InvalidOperationException(ValidationCodes.RecordingUnavailable + ": hook thread start timed out.");
         }
 
-        if (_startError is not null)
+        if (started.Task.Result is { } err)
         {
-            var err = _startError;
             Stop();
             throw new InvalidOperationException(ValidationCodes.RecordingUnavailable + ": " + err.Message, err);
         }
@@ -87,6 +84,8 @@ public sealed class NativeKeyboardHook : IKeyboardHookSource
         {
             thread = _thread;
             threadId = _threadId;
+            Volatile.Write(ref _stopRequested, true);
+            Volatile.Write(ref _handler, null);
         }
 
         if (thread is null)
@@ -94,29 +93,15 @@ public sealed class NativeKeyboardHook : IKeyboardHookSource
             return;
         }
 
-        if (threadId != 0 && Environment.CurrentManagedThreadId != (int)threadId)
+        if (threadId != 0)
         {
             PostThreadMessage(threadId, WmQuit, UIntPtr.Zero, IntPtr.Zero);
-            if (!thread.Join(TimeSpan.FromSeconds(5)))
-            {
-                // Keep references; report via caller if needed.
-            }
-        }
-        else if (Environment.CurrentManagedThreadId != thread.ManagedThreadId)
-        {
-            thread.Join(TimeSpan.FromSeconds(5));
         }
 
-        lock (_sync)
+        // A callback may stop its own source. Its message loop performs final cleanup.
+        if (Thread.CurrentThread != thread && !thread.Join(TimeSpan.FromSeconds(5)))
         {
-            _thread = null;
-            _threadId = 0;
-            _handler = null;
-            _proc = null;
-            _hook = IntPtr.Zero;
-            _started?.Dispose();
-            _started = null;
-            _startError = null;
+            throw new TimeoutException("Keyboard hook thread did not stop.");
         }
     }
 
@@ -131,11 +116,14 @@ public sealed class NativeKeyboardHook : IKeyboardHookSource
         Stop();
     }
 
-    private void ThreadMain()
+    private void ThreadMain(TaskCompletionSource<Exception?> started)
     {
+        var hook = IntPtr.Zero;
         try
         {
-            _threadId = GetCurrentThreadId();
+            // Create the queue before publishing the native thread ID to Stop.
+            PeekMessage(out _, IntPtr.Zero, 0, 0, 0);
+            lock (_sync) { _threadId = GetCurrentThreadId(); }
             _proc = HookCallback;
             IntPtr module;
             using (var process = System.Diagnostics.Process.GetCurrentProcess())
@@ -143,18 +131,18 @@ public sealed class NativeKeyboardHook : IKeyboardHookSource
                 module = GetModuleHandle(process.MainModule?.ModuleName);
             }
 
-            _hook = SetWindowsHookEx(WhKeyboardLl, _proc, module, 0);
-            if (_hook == IntPtr.Zero)
+            hook = SetWindowsHookEx(WhKeyboardLl, _proc, module, 0);
+            lock (_sync) { _hook = hook; }
+            if (hook == IntPtr.Zero)
             {
-                _startError = new InvalidOperationException(
-                    "SetWindowsHookEx failed: " + Marshal.GetLastWin32Error());
-                _started?.Set();
+                started.TrySetResult(new InvalidOperationException(
+                    "SetWindowsHookEx failed: " + Marshal.GetLastWin32Error()));
                 return;
             }
 
-            _started?.Set();
+            started.TrySetResult(null);
 
-            while (GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
+            while (!Volatile.Read(ref _stopRequested) && GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
             {
                 TranslateMessage(ref msg);
                 DispatchMessage(ref msg);
@@ -162,15 +150,21 @@ public sealed class NativeKeyboardHook : IKeyboardHookSource
         }
         catch (Exception ex)
         {
-            _startError ??= ex;
-            _started?.Set();
+            started.TrySetResult(ex);
         }
         finally
         {
-            if (_hook != IntPtr.Zero)
+            if (hook != IntPtr.Zero)
             {
-                UnhookWindowsHookEx(_hook);
+                UnhookWindowsHookEx(hook);
+            }
+            lock (_sync)
+            {
                 _hook = IntPtr.Zero;
+                _handler = null;
+                _proc = null;
+                _threadId = 0;
+                _thread = null;
             }
         }
     }
@@ -182,7 +176,7 @@ public sealed class NativeKeyboardHook : IKeyboardHookSource
             return CallNextHookEx(_hook, nCode, wParam, lParam);
         }
 
-        var handler = _handler;
+        var handler = Volatile.Read(ref _handler);
         if (handler is null || lParam == IntPtr.Zero)
         {
             return CallNextHookEx(_hook, nCode, wParam, lParam);
@@ -245,6 +239,7 @@ public sealed class NativeKeyboardHook : IKeyboardHookSource
         public IntPtr LParam;
         public uint Time;
         public Point Pt;
+        public uint Private;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -266,6 +261,10 @@ public sealed class NativeKeyboardHook : IKeyboardHookSource
 
     [DllImport("user32.dll")]
     private static extern int GetMessage(out Msg lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PeekMessage(out Msg msg, IntPtr hwnd, uint min, uint max, uint remove);
 
     [DllImport("user32.dll")]
     private static extern bool TranslateMessage(ref Msg lpMsg);

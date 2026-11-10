@@ -3,7 +3,7 @@ using KeySender.Models;
 namespace KeySender.Services;
 
 /// <summary>
-/// Execution coordinator: FIFO queue, ledger updates, ReleaseAll, recording gate.
+/// Execution coordinator: FIFO queue, cancellation, recording gate.
 /// <see cref="ExecuteAsync"/> remains the invoke adapter.
 /// </summary>
 public interface IKeySenderExecutionService
@@ -23,13 +23,8 @@ public interface IKeySenderExecutionService
 
     bool TryCancel(Guid runId);
 
-    Task<HeldKeysSnapshot> ReleaseAllAsync(CancellationToken cancellationToken = default);
-
-    HeldKeysSnapshot GetHeldKeys();
-
     IReadOnlyList<RunSnapshot> GetActiveAndQueuedRuns();
 
     IReadOnlyList<RunSnapshot> GetRecentRuns();
 
-    bool SenderAvailable { get; }
 }

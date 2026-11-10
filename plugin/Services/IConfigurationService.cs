@@ -9,7 +9,6 @@ public interface IConfigurationService
 {
     Task<ConfigurationResult> CreateAsync(
         NodeWrite write,
-        string? acknowledgedWarningFingerprint,
         CancellationToken cancellationToken = default);
 
     Task<ConfigurationResult> GetDetailAsync(

@@ -24,8 +24,6 @@ const METHOD_NAMES = [
   'CancelRecordingAsync',
   'GetRunsAsync',
   'CancelRunAsync',
-  'GetHeldKeysAsync',
-  'ReleaseHeldKeysAsync',
   'PreviewImportAsync',
   'CommitImportAsync',
   'ReleaseImportPreviewAsync',
@@ -35,7 +33,6 @@ const METHOD_NAMES = [
 const EVENT_NAMES = [
   'RecordingChanged',
   'RunsChanged',
-  'HeldKeysChanged',
   'NodesChanged',
   'CategoriesChanged',
   'FocusNodeRequested',

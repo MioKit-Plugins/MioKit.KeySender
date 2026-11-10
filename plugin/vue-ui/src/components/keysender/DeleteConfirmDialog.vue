@@ -20,13 +20,6 @@ const deleteOpen = computed({
   },
 });
 
-const heldOpen = computed({
-  get: () => store.dialogs.heldDelete,
-  set: (v) => {
-    store.dialogs.heldDelete = v;
-  },
-});
-
 const count = computed(() => store.pendingDeleteIds.length);
 </script>
 
@@ -44,7 +37,7 @@ const count = computed(() => store.pendingDeleteIds.length);
         <Button
           variant="destructive"
           class="min-w-24"
-          @click="store.confirmDelete({ releaseHeldKeys: false })"
+          @click="store.confirmDelete()"
         >
           确认删除
         </Button>
@@ -52,24 +45,4 @@ const count = computed(() => store.pendingDeleteIds.length);
     </DialogContent>
   </Dialog>
 
-  <Dialog v-model:open="heldOpen">
-    <DialogContent class="sm:max-w-md">
-      <DialogHeader>
-        <DialogTitle>删除前需释放模拟键</DialogTitle>
-        <DialogDescription>
-          将取消全部任务并释放仍按下的模拟键，再删除所选节点。
-        </DialogDescription>
-      </DialogHeader>
-      <DialogFooter class="gap-2">
-        <Button variant="outline" class="min-w-20" @click="heldOpen = false">取消</Button>
-        <Button
-          variant="destructive"
-          class="min-w-36"
-          @click="store.confirmDelete({ releaseHeldKeys: true })"
-        >
-          释放并删除
-        </Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
 </template>

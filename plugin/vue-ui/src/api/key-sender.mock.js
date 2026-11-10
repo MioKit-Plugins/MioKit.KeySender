@@ -371,23 +371,7 @@ function createInitialState() {
     nodes,
     nodesSeq: 1,
     runsSeq: 1,
-    heldSeq: 1,
     recordingSeq: 1,
-    heldKeys: {
-      sequenceNumber: 1,
-      keys: [
-        {
-          key: 'LeftShift',
-          display: '左 Shift',
-          sourceRunId: 'run-held-sample',
-          sourceNodeId: userShiftOnlyId,
-          heldSince: new Date().toISOString(),
-          uncertain: false,
-        },
-      ],
-      isReleasing: false,
-      senderAvailable: true,
-    },
     runs: {
       sequenceNumber: 1,
       active: [
@@ -414,7 +398,6 @@ function createInitialState() {
     listeners: {
       RecordingChanged: new Set(),
       RunsChanged: new Set(),
-      HeldKeysChanged: new Set(),
       NodesChanged: new Set(),
       CategoriesChanged: new Set(),
       FocusNodeRequested: new Set(),
@@ -483,11 +466,6 @@ function bumpNodes(kind, nodeIds) {
   });
 }
 
-function snapshotHeld() {
-  state.heldKeys.sequenceNumber = state.heldSeq;
-  return clone(state.heldKeys);
-}
-
 function snapshotRuns() {
   state.runs.sequenceNumber = state.runsSeq;
   return clone(state.runs);
@@ -511,6 +489,8 @@ export function createKeySenderMock() {
     /** Demo helper: inject mock key into current recording */
     injectMockKey(type, key) {
       if (!state.recording || state.recording.state !== 'recording') return;
+      if (state.recordingKeyStates.get(key) === type) return;
+      state.recordingKeyStates.set(key, type);
       if (!state.recordingFragment) {
         state.recordingFragment = { recordingId: state.recording.recordingId, events: [], notices: [] };
       }
@@ -544,7 +524,6 @@ export function createKeySenderMock() {
         categories: buildCategoryList().items,
         nodes: pageNodes('', 1, 20, 'all', null),
         runs: snapshotRuns(),
-        heldKeys: snapshotHeld(),
       });
     },
 
@@ -663,16 +642,6 @@ export function createKeySenderMock() {
           details: { errors: validation.errors, warnings: validation.warnings },
         });
       }
-      if (validation.warnings.length) {
-        if (request.acknowledgedWarningFingerprint !== validation.warningFingerprint) {
-          return fail('sequence_confirmation_required', '序列结束后仍有按键保持按下', {
-            details: {
-              warningFingerprint: validation.warningFingerprint,
-              warnings: validation.warnings,
-            },
-          });
-        }
-      }
       const categoryId = resolveTargetCategoryId(request.categoryId);
       if (categoryId === undefined) {
         return fail('category_not_found', '分类不存在');
@@ -713,16 +682,6 @@ export function createKeySenderMock() {
           details: { errors: validation.errors, warnings: validation.warnings },
         });
       }
-      if (validation.warnings.length) {
-        if (request.acknowledgedWarningFingerprint !== validation.warningFingerprint) {
-          return fail('sequence_confirmation_required', '序列结束后仍有按键保持按下', {
-            details: {
-              warningFingerprint: validation.warningFingerprint,
-              warnings: validation.warnings,
-            },
-          });
-        }
-      }
       node.name = detail.name.trim();
       node.description = detail.description ?? '';
       node.beforeDelayMs = detail.beforeDelayMs ?? 0;
@@ -752,16 +711,6 @@ export function createKeySenderMock() {
         },
       };
       const validation = analyzeSequence(write);
-      if (validation.warnings.length) {
-        if (request.acknowledgedWarningFingerprint !== validation.warningFingerprint) {
-          return fail('sequence_confirmation_required', '复制源序列存在配对警告', {
-            details: {
-              warningFingerprint: validation.warningFingerprint,
-              warnings: validation.warnings,
-            },
-          });
-        }
-      }
       const categoryId = resolveTargetCategoryId(
         request.categoryId ?? source.categoryId ?? null,
       );
@@ -794,19 +743,6 @@ export function createKeySenderMock() {
       if (ids.some((id) => findNode(id)?.isBuiltIn)) {
         return fail('builtin_read_only', '不能删除内置节点');
       }
-      const heldSources = state.heldKeys.keys
-        .map((k) => k.sourceNodeId)
-        .filter((id) => ids.includes(id));
-      if (heldSources.length && !request.releaseHeldKeys) {
-        return fail('held_keys_confirmation_required', '所选节点仍有保持键，需先确认释放', {
-          details: { nodeIds: heldSources },
-        });
-      }
-      if (request.releaseHeldKeys) {
-        state.heldKeys.keys = [];
-        state.heldSeq += 1;
-        emit('HeldKeysChanged', snapshotHeld());
-      }
       const deletedIds = [];
       state.nodes = state.nodes.filter((n) => {
         if (ids.includes(n.nodeId)) {
@@ -828,10 +764,8 @@ export function createKeySenderMock() {
       if (state.runs.active.length) {
         return fail('execution_busy', '有任务进行中，无法开始录制');
       }
-      if (state.heldKeys.keys.length) {
-        return fail('keys_held', '当前有保持键，无法开始录制');
-      }
       const recordingId = newEventId();
+      state.recordingKeyStates = new Map();
       state.recordingFragment = { recordingId, events: [], notices: [] };
       state.recording = {
         recordingId,
@@ -945,27 +879,6 @@ export function createKeySenderMock() {
       return ok({ cancellationRequested: true });
     },
 
-    async GetHeldKeysAsync(request) {
-      const err = requireSession(request);
-      if (err) return err;
-      return ok(snapshotHeld());
-    },
-
-    async ReleaseHeldKeysAsync(request) {
-      const err = requireSession(request);
-      if (err) return err;
-      state.heldKeys.isReleasing = true;
-      state.heldSeq += 1;
-      emit('HeldKeysChanged', snapshotHeld());
-      state.heldKeys.keys = [];
-      state.heldKeys.isReleasing = false;
-      state.heldKeys.senderAvailable = true;
-      state.heldSeq += 1;
-      const snap = snapshotHeld();
-      emit('HeldKeysChanged', snap);
-      return ok(snap);
-    },
-
     async PreviewImportAsync(request) {
       const err = requireSession(request);
       if (err) return err;
@@ -1055,15 +968,6 @@ export function createKeySenderMock() {
       const preview = state.importPreview;
       if (!preview || preview.previewId !== request.previewId) {
         return fail('import_preview_expired', '导入预览已过期');
-      }
-      if (preview.warningFingerprint
-        && request.acknowledgedWarningFingerprint !== preview.warningFingerprint) {
-        return fail('sequence_confirmation_required', '导入存在配对警告，需确认', {
-          details: {
-            warningFingerprint: preview.warningFingerprint,
-            warnings: preview.items.flatMap((i) => i.warnings),
-          },
-        });
       }
       const createdItems = [];
       for (const payload of preview._payloads) {

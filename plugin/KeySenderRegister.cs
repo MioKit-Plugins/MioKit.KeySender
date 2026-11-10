@@ -24,11 +24,9 @@ public class KeySenderRegister : RegisterBase<KeySenderRegister>
             .AsSelf()
             .SingleInstance();
 
-        builder.RegisterType<HeldKeyLedger>().AsSelf().SingleInstance();
         builder.RegisterType<NativeKeyboardSender>().As<IKeyboardSender>().SingleInstance();
         builder.RegisterType<Win32TargetWindowOps>().As<ITargetWindowOps>().SingleInstance();
         builder.RegisterType<TaskDelayService>().As<IDelayService>().SingleInstance();
-        builder.RegisterType<Win32ExternalKeyPrep>().As<IExternalKeyPrep>().SingleInstance();
         builder.RegisterType<TargetWindowService>().AsSelf().SingleInstance();
         builder.RegisterType<ConfigurationRunSource>().As<IRunConfigurationSource>().SingleInstance();
         builder.RegisterType<StopwatchMonotonicClock>().As<IMonotonicClock>().SingleInstance();
@@ -47,16 +45,15 @@ public class KeySenderRegister : RegisterBase<KeySenderRegister>
                 }
 
                 return new ExecutionService(
-                    c.Resolve<HeldKeyLedger>(),
                     c.Resolve<IKeyboardSender>(),
                     c.Resolve<TargetWindowService>(),
                     c.Resolve<IRunConfigurationSource>(),
                     c.Resolve<IDelayService>(),
-                    c.Resolve<IExternalKeyPrep>(),
                     c.ResolveOptional<IMioTaskService>(),
                     c.ResolveOptional<IGlobalHotKeyService>(),
                     logger);
             })
+            .As<IPluginLifecycleComponent>()
             .As<IKeySenderExecutionService>()
             .As<IInputActivityGate>()
             .AsSelf()
@@ -64,6 +61,7 @@ public class KeySenderRegister : RegisterBase<KeySenderRegister>
 
         builder.RegisterType<RecordingService>()
             .AsSelf()
+            .As<IPluginLifecycleComponent>()
             .SingleInstance();
 
         builder.RegisterType<TransferService>()

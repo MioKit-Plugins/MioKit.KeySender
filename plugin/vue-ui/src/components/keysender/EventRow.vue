@@ -25,6 +25,7 @@ const emit = defineEmits([
   'update',
   'duplicate',
   'remove',
+  'reorderstart',
 ]);
 
 const delayInvalid = computed(() => {
@@ -35,14 +36,15 @@ const delayInvalid = computed(() => {
 
 <template>
   <div
-    class="grid grid-cols-[1.5rem_2rem_6.5rem_minmax(7.5rem,1fr)_6.5rem_auto] items-start gap-1 border-b border-border/60 px-1 py-1.5"
+    class="grid h-[68px] grid-cols-[1.5rem_2rem_6.5rem_minmax(7.5rem,1fr)_6.5rem_auto] items-start gap-1 border-b border-border/60 px-1 py-1.5"
   >
     <button
       type="button"
-      class="mt-1.5 inline-flex size-5 cursor-grab items-center justify-center text-muted-foreground disabled:opacity-40"
+      class="mt-1.5 inline-flex size-5 touch-none cursor-grab items-center justify-center text-muted-foreground disabled:opacity-40"
       :disabled="readOnly"
       aria-label="拖动排序"
       data-drag-handle
+      @pointerdown.prevent="emit('reorderstart', $event)"
     >
       <GripVertical class="size-3.5" />
     </button>
@@ -97,7 +99,7 @@ const delayInvalid = computed(() => {
       </Button>
     </div>
 
-    <div class="col-span-full min-h-4 px-1 text-[11px] leading-4">
+    <div class="col-span-full min-h-4 truncate px-1 text-[11px] leading-4" :title="errorText || warningText">
       <span v-if="errorText" class="text-destructive">{{ errorText }}</span>
       <span v-else-if="warningText" class="text-warning-foreground/90 dark:text-warning">{{ warningText }}</span>
       <span v-else class="invisible">占位</span>

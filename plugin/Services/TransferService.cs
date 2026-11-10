@@ -126,7 +126,6 @@ public sealed class TransferService
     public async Task<TransferOperationResult> CommitAsync(
         string windowSessionId,
         string previewId,
-        string? acknowledgedWarningFingerprint,
         byte[]? revalidateBytes = null,
         CancellationToken cancellationToken = default)
     {
@@ -158,16 +157,6 @@ public sealed class TransferService
                     "Preview has hard errors and cannot be imported.");
             }
 
-            if (entry.Preview.WarningFingerprint is not null
-                && !string.Equals(
-                    acknowledgedWarningFingerprint,
-                    entry.Preview.WarningFingerprint,
-                    StringComparison.Ordinal))
-            {
-                return TransferOperationResult.Fail(
-                    ValidationCodes.SequenceConfirmationRequired,
-                    "Package warning fingerprint must be acknowledged before commit.");
-            }
         }
 
         if (revalidateBytes is not null)
@@ -225,12 +214,9 @@ public sealed class TransferService
         {
             cancellationToken.ThrowIfCancellationRequested();
             var write = entry.Nodes[i];
-            var analysis = entry.Analyses[i];
-            // Per-node ack after package-level confirmation (design 05 §5).
-            var nodeAck = analysis.HasWarnings ? analysis.WarningFingerprint : null;
 
             var result = await _configuration
-                .CreateAsync(write, nodeAck, cancellationToken)
+                .CreateAsync(write, cancellationToken)
                 .ConfigureAwait(false);
 
             if (!result.Ok)

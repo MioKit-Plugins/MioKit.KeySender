@@ -72,6 +72,4 @@ public static class KeySenderConst
     public const int TransferPreviewTtlSeconds = 5 * 60;
 
     public const int RecordingEventCap = 10000;
-    public const int RecordingDrainTimeoutMs = 2000;
-    public const int RecordingBaselineTimeoutMs = 2000;
 }

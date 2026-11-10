@@ -5,19 +5,17 @@ using Serilog;
 namespace KeySender.Services;
 
 /// <summary>
-/// Serial FIFO runner (max 64 waiting + 1 active). Ledger mutations only happen here.
-/// Successful completion intentionally retains held keys (no automatic KeyUp).
+/// Serial FIFO runner (max 64 waiting + 1 active). Sends only configured events.
+/// Cancellation and shutdown stop future sends without synthesizing key releases.
 /// </summary>
-public sealed class ExecutionService : IKeySenderExecutionService, IInputActivityGate
+public sealed class ExecutionService : IKeySenderExecutionService, IInputActivityGate, IPluginLifecycleComponent
 {
     public const int MaxQueued = 64;
 
-    private readonly HeldKeyLedger _ledger;
     private readonly IKeyboardSender _sender;
     private readonly TargetWindowService _targets;
     private readonly IRunConfigurationSource _configs;
     private readonly IDelayService _delay;
-    private readonly IExternalKeyPrep _externalKeys;
     private readonly IMioTaskService? _tasks;
     private readonly IGlobalHotKeyService? _hotkeys;
     private readonly ILogger? _logger;
@@ -25,47 +23,28 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
     private readonly object _gate = new();
     private readonly Queue<RunRequest> _queue = new();
     private readonly List<RunSnapshot> _recent = [];
-    private readonly SemaphoreSlim _serial = new(1, 1);
 
     private RunRequest? _active;
     private Task? _drainLoop;
     private bool _accepting = true;
-    private bool _senderAvailable = true;
-    private bool _isReleasing;
     private bool _recordingReserved;
-    private int _recentSequence;
 
     public ExecutionService(
-        HeldKeyLedger ledger,
         IKeyboardSender sender,
         TargetWindowService targets,
         IRunConfigurationSource configs,
         IDelayService delay,
-        IExternalKeyPrep externalKeys,
         IMioTaskService? tasks = null,
         IGlobalHotKeyService? hotkeys = null,
         ILogger? logger = null)
     {
-        _ledger = ledger ?? throw new ArgumentNullException(nameof(ledger));
         _sender = sender ?? throw new ArgumentNullException(nameof(sender));
         _targets = targets ?? throw new ArgumentNullException(nameof(targets));
         _configs = configs ?? throw new ArgumentNullException(nameof(configs));
         _delay = delay ?? throw new ArgumentNullException(nameof(delay));
-        _externalKeys = externalKeys ?? throw new ArgumentNullException(nameof(externalKeys));
         _tasks = tasks;
         _hotkeys = hotkeys;
         _logger = logger;
-    }
-
-    public bool SenderAvailable
-    {
-        get
-        {
-            lock (_gate)
-            {
-                return _senderAvailable;
-            }
-        }
     }
 
     public bool IsRecordingActive
@@ -83,9 +62,9 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
     {
         lock (_gate)
         {
-            if (!_senderAvailable)
+            if (!_accepting)
             {
-                rejectCode = ValidationCodes.SenderUnavailable;
+                rejectCode = ValidationCodes.PluginStopping;
                 return false;
             }
 
@@ -101,12 +80,6 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
                 return false;
             }
 
-            if (!_ledger.IsEmpty)
-            {
-                rejectCode = ValidationCodes.KeysHeld;
-                return false;
-            }
-
             _recordingReserved = true;
             rejectCode = null;
             return true;
@@ -118,14 +91,6 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
         lock (_gate)
         {
             _recordingReserved = false;
-        }
-    }
-
-    public HeldKeysSnapshot GetHeldKeys()
-    {
-        lock (_gate)
-        {
-            return _ledger.CreateSnapshot(_isReleasing, _senderAvailable);
         }
     }
 
@@ -229,9 +194,8 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
 
         if (queued is not null)
         {
-            // Queued-only cancel: complete immediately, do NOT release ledger.
             queued.Cts.Cancel();
-            CompleteRequest(queued, RunState.Cancelled, error: null, releaseLedger: false);
+            CompleteRequest(queued, RunState.Cancelled, error: null);
             return true;
         }
 
@@ -244,64 +208,36 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
         return false;
     }
 
-    public async Task<HeldKeysSnapshot> ReleaseAllAsync(CancellationToken cancellationToken = default)
+    public Task StartAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate) { _accepting = true; }
+        return Task.CompletedTask;
+    }
+
+    public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         List<RunRequest> queued;
         RunRequest? active;
+        Task? drain;
         lock (_gate)
         {
             _accepting = false;
-            _isReleasing = true;
             queued = _queue.ToList();
             _queue.Clear();
             active = _active;
+            drain = _drainLoop;
         }
 
-        foreach (var item in queued)
+        foreach (var request in queued)
         {
-            item.Cts.Cancel();
-            CompleteRequest(item, RunState.Cancelled, error: null, releaseLedger: false);
+            request.Cts.Cancel();
+            CompleteRequest(request, RunState.Cancelled, error: null);
         }
-
         active?.Cts.Cancel();
-
-        // Wait for the active run (and its in-flight native call) to leave the serial slot.
-        if (active is not null)
+        if (drain is not null)
         {
-            try
-            {
-                await active.Completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
-            }
-            catch
-            {
-                // Terminal state already published on the request.
-            }
-        }
-
-        await _serial.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var cleanupOk = await CleanupHeldKeysAsync(CancellationToken.None).ConfigureAwait(false);
-            lock (_gate)
-            {
-                _isReleasing = false;
-                if (cleanupOk)
-                {
-                    _senderAvailable = true;
-                    _accepting = true;
-                }
-                else
-                {
-                    _senderAvailable = false;
-                    _accepting = false;
-                }
-
-                return _ledger.CreateSnapshot(_isReleasing, _senderAvailable);
-            }
-        }
-        finally
-        {
-            _serial.Release();
+            await drain.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -312,16 +248,11 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
         InvokeSource source,
         CancellationToken cancellationToken)
     {
-        var request = new RunRequest(nodeId, nodeName, target, source, cancellationToken);
-
         lock (_gate)
         {
-            if (!_accepting || !_senderAvailable)
+            if (!_accepting)
             {
-                var code = !_senderAvailable
-                    ? ValidationCodes.SenderUnavailable
-                    : ValidationCodes.PluginStopping;
-                throw new InvalidOperationException($"{code}: execution not accepting");
+                throw new InvalidOperationException($"{ValidationCodes.PluginStopping}: execution not accepting");
             }
 
             if (_recordingReserved)
@@ -334,74 +265,48 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
                 throw new InvalidOperationException($"{ValidationCodes.QueueFull}: waiting queue is full");
             }
 
+            var request = new RunRequest(nodeId, nodeName, target, source, cancellationToken);
             request.SetState(RunState.Queued);
             _queue.Enqueue(request);
             _drainLoop ??= Task.Run(DrainAsync);
+            return request.Completion.Task;
         }
-
-        return request.Completion.Task;
     }
 
     private async Task DrainAsync()
     {
-        try
+        while (true)
         {
-            while (true)
-            {
-                RunRequest? next;
-                lock (_gate)
-                {
-                    if (_queue.Count == 0)
-                    {
-                        _drainLoop = null;
-                        return;
-                    }
-
-                    next = _queue.Dequeue();
-                    _active = next;
-                }
-
-                await _serial.WaitAsync().ConfigureAwait(false);
-                try
-                {
-                    try
-                    {
-                        await RunManagedAsync(next).ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        // Run terminal state is published on the request; keep draining.
-                        _logger?.Warning(ex, "KeySender run ended with exception {RunId}", next.RunId);
-                        if (!next.Completion.Task.IsCompleted)
-                        {
-                            CompleteRequest(
-                                next,
-                                RunState.Failed,
-                                ValidationCodes.InputSendFailed,
-                                releaseLedger: false);
-                        }
-                    }
-                }
-                finally
-                {
-                    lock (_gate)
-                    {
-                        if (ReferenceEquals(_active, next))
-                        {
-                            _active = null;
-                        }
-                    }
-
-                    _serial.Release();
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger?.Error(ex, "KeySender drain loop failed");
+            RunRequest next;
             lock (_gate)
             {
-                _drainLoop = null;
+                if (_queue.Count == 0)
+                {
+                    _drainLoop = null;
+                    return;
+                }
+                next = _queue.Dequeue();
+                _active = next;
+            }
+
+            try
+            {
+                await RunManagedAsync(next).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                if (!next.Completion.Task.IsCompleted)
+                    CompleteRequest(next, RunState.Cancelled, error: null);
+            }
+            catch (Exception ex)
+            {
+                _logger?.Warning(ex, "KeySender managed run failed {RunId}", next.RunId);
+                if (!next.Completion.Task.IsCompleted)
+                    CompleteRequest(next, RunState.Failed, ValidationCodes.InputSendFailed);
+            }
+            finally
+            {
+                lock (_gate) { _active = null; }
             }
         }
     }
@@ -421,25 +326,18 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
             NodeId = request.NodeId,
         };
 
-        return _tasks.RunAsync(options, ct =>
+        return _tasks.RunAsync(options, async ct =>
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(request.Token, ct);
-            return ExecuteRunAsync(request, linked.Token);
+            await ExecuteRunAsync(request, linked.Token).ConfigureAwait(false);
         }, request.Token);
     }
 
     private async Task ExecuteRunAsync(RunRequest request, CancellationToken cancellationToken)
     {
-        // If ReleaseAll already owns cleanup, exit quietly after cancel.
-        bool releasing;
-        lock (_gate)
+        if (cancellationToken.IsCancellationRequested)
         {
-            releasing = _isReleasing;
-        }
-
-        if (releasing || cancellationToken.IsCancellationRequested)
-        {
-            CompleteRequest(request, RunState.Cancelled, error: null, releaseLedger: !releasing);
+            CompleteRequest(request, RunState.Cancelled, error: null);
             return;
         }
 
@@ -459,20 +357,14 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
             request.NodeName ??= config.Write.Name;
             var write = config.Write;
 
-            IReadOnlyCollection<string> initialHeld;
-            lock (_gate)
-            {
-                initialHeld = _ledger.Tokens.ToArray();
-            }
-
-            var analysis = SequenceAnalyzer.AnalyzeSequence(write, initialHeld);
+            var analysis = SequenceAnalyzer.AnalyzeSequence(write);
             if (!analysis.IsValid)
             {
                 failCode = analysis.HardErrors.FirstOrDefault()?.Code ?? ValidationCodes.ValidationFailed;
                 throw new InvalidOperationException($"{failCode}: hard validation failed");
             }
 
-            var conflict = PreviewHotkeyConflicts(write, initialHeld);
+            var conflict = PreviewHotkeyConflicts(write);
             if (conflict is not null)
             {
                 failCode = conflict;
@@ -484,15 +376,7 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
             request.SetState(RunState.BeforeDelay);
             await _delay.DelayAsync(write.BeforeDelayMs, cancellationToken).ConfigureAwait(false);
 
-            request.SetState(RunState.WaitingExternalKeys);
-            var firstUps = CollectExplicitFirstUps(write);
-            await _externalKeys.WaitReadyAsync(
-                    new HashSet<string>(initialHeld, StringComparer.Ordinal),
-                    firstUps,
-                    cancellationToken)
-                .ConfigureAwait(false);
-
-            var logicalPressed = new HashSet<string>(initialHeld, StringComparer.Ordinal);
+            var logicalPressed = new HashSet<string>(StringComparer.Ordinal);
             var events = write.Sequence.Events ?? [];
             for (var i = 0; i < events.Count; i++)
             {
@@ -544,174 +428,32 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
                     sendResult = KeyboardSendResult.Ambiguous();
                 }
 
-                if (sendResult.Submitted)
-                {
-                    ApplyLedger(keyInfo, isDown, uncertain: false, request);
-                    ApplyLogical(logicalPressed, ev);
-                }
-                else if (sendResult.Uncertain && isDown)
-                {
-                    ApplyLedger(keyInfo, isDown: true, uncertain: true, request);
-                    failCode = ValidationCodes.InputSendFailed;
-                    throw new InvalidOperationException($"{failCode}: uncertain send");
-                }
-                else
+                if (!sendResult.Submitted)
                 {
                     failCode = ValidationCodes.InputSendFailed;
-                    throw new InvalidOperationException(
-                        $"{failCode}: SendInput failed (native={sendResult.NativeError})");
+                    throw new InvalidOperationException($"{failCode}: SendInput failed (native={sendResult.NativeError})");
                 }
+                ApplyLogical(logicalPressed, ev);
             }
 
             request.SetState(RunState.AfterDelay);
             await _delay.DelayAsync(write.AfterDelayMs, cancellationToken).ConfigureAwait(false);
 
-            // CRITICAL: succeeded WITH held keys retained — no automatic KeyUp.
-            CompleteRequest(request, RunState.Succeeded, error: null, releaseLedger: false);
+            CompleteRequest(request, RunState.Succeeded, error: null);
         }
         catch (OperationCanceledException)
         {
-            request.SetState(RunState.Cancelling);
-            bool skipCleanup;
-            lock (_gate)
-            {
-                skipCleanup = _isReleasing;
-            }
-
-            if (!skipCleanup)
-            {
-                CancelAllQueued();
-                var ok = await CleanupHeldKeysAsync(CancellationToken.None).ConfigureAwait(false);
-                if (!ok)
-                {
-                    lock (_gate)
-                    {
-                        _senderAvailable = false;
-                        _accepting = false;
-                    }
-                }
-            }
-
-            CompleteRequest(request, RunState.Cancelled, error: null, releaseLedger: false);
+            CompleteRequest(request, RunState.Cancelled, error: null);
         }
         catch (Exception ex)
         {
             _logger?.Warning(ex, "KeySender run failed {RunId} {NodeId}", request.RunId, request.NodeId);
-            failCode ??= ValidationCodes.InputSendFailed;
-
-            bool skipCleanup;
-            lock (_gate)
-            {
-                skipCleanup = _isReleasing;
-            }
-
-            if (!skipCleanup)
-            {
-                CancelAllQueued();
-                var ok = await CleanupHeldKeysAsync(CancellationToken.None).ConfigureAwait(false);
-                if (!ok)
-                {
-                    lock (_gate)
-                    {
-                        _senderAvailable = false;
-                        _accepting = false;
-                    }
-                }
-            }
-
-            CompleteRequest(request, RunState.Failed, error: failCode, releaseLedger: false);
+            CompleteRequest(request, RunState.Failed, failCode ?? ValidationCodes.InputSendFailed);
         }
     }
 
-    private void ApplyLedger(KeyTokenInfo key, bool isDown, bool uncertain, RunRequest request)
+    private void CompleteRequest(RunRequest request, RunState state, string? error)
     {
-        // Serial path only (held by _serial).
-        if (isDown)
-        {
-            _ledger.NoteDown(key, request.RunId, request.NodeId, DateTimeOffset.UtcNow, uncertain);
-        }
-        else if (!uncertain)
-        {
-            _ledger.NoteUp(key.Token);
-        }
-    }
-
-    private async Task<bool> CleanupHeldKeysAsync(CancellationToken cancellationToken)
-    {
-        var toRelease = _ledger.SnapshotReverseHoldOrder();
-        if (toRelease.Count == 0)
-        {
-            return true;
-        }
-
-        var allOk = true;
-        foreach (var entry in toRelease)
-        {
-            if (!KeyTokenCatalog.TryGet(entry.Key, out var keyInfo))
-            {
-                keyInfo = new KeyTokenInfo(entry.Key, entry.VirtualKey, entry.ScanCode, entry.Extended);
-            }
-
-            var ok = await TrySendCleanupUpAsync(keyInfo, cancellationToken).ConfigureAwait(false);
-            if (ok)
-            {
-                _ledger.NoteUp(entry.Key);
-            }
-            else
-            {
-                allOk = false;
-            }
-        }
-
-        return allOk;
-    }
-
-    private async Task<bool> TrySendCleanupUpAsync(KeyTokenInfo key, CancellationToken cancellationToken)
-    {
-        for (var attempt = 0; attempt < 2; attempt++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                var result = await _sender.SendAsync(key, keyDown: false, cancellationToken).ConfigureAwait(false);
-                if (result.Submitted)
-                {
-                    return true;
-                }
-            }
-            catch
-            {
-                // Retry once per design 03 §10.
-            }
-        }
-
-        return false;
-    }
-
-    private void CancelAllQueued()
-    {
-        List<RunRequest> queued;
-        lock (_gate)
-        {
-            queued = _queue.ToList();
-            _queue.Clear();
-        }
-
-        foreach (var item in queued)
-        {
-            item.Cts.Cancel();
-            CompleteRequest(item, RunState.Cancelled, error: null, releaseLedger: false);
-        }
-    }
-
-    private void CompleteRequest(RunRequest request, RunState state, string? error, bool releaseLedger)
-    {
-        if (releaseLedger)
-        {
-            // Only used when a cancelled active run must clean without going through catch —
-            // ReleaseAll path sets releaseLedger=false and cleans itself.
-        }
-
         request.FinishedAt = DateTimeOffset.UtcNow;
         request.SetState(state);
         request.Error = error;
@@ -724,7 +466,6 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
                 _recent.RemoveAt(_recent.Count - 1);
             }
 
-            _recentSequence++;
         }
 
         if (state == RunState.Succeeded)
@@ -742,9 +483,9 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
         }
     }
 
-    private string? PreviewHotkeyConflicts(NodeWrite write, IEnumerable<string> initialHeld)
+    private string? PreviewHotkeyConflicts(NodeWrite write)
     {
-        var pressed = new HashSet<string>(initialHeld, StringComparer.Ordinal);
+        var pressed = new HashSet<string>(StringComparer.Ordinal);
         var conflict = OutputHotkeyConflict.FindConflict(_hotkeys, pressed);
         if (conflict is not null)
         {
@@ -774,26 +515,6 @@ public sealed class ExecutionService : IKeySenderExecutionService, IInputActivit
         {
             pressed.Remove(ev.Key);
         }
-    }
-
-    private static HashSet<string> CollectExplicitFirstUps(NodeWrite write)
-    {
-        var seenDown = new HashSet<string>(StringComparer.Ordinal);
-        var firstUps = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var ev in write.Sequence.Events ?? [])
-        {
-            if (string.Equals(ev.Type, KeySenderConst.EventTypeKeyDown, StringComparison.Ordinal))
-            {
-                seenDown.Add(ev.Key);
-            }
-            else if (string.Equals(ev.Type, KeySenderConst.EventTypeKeyUp, StringComparison.Ordinal)
-                     && !seenDown.Contains(ev.Key))
-            {
-                firstUps.Add(ev.Key);
-            }
-        }
-
-        return firstUps;
     }
 
     private sealed class RunRequest

@@ -98,7 +98,6 @@ public sealed class CreateNodeRequest : UiSessionRequest
 
     public string? CategoryId { get; set; }
 
-    public string? AcknowledgedWarningFingerprint { get; set; }
 }
 
 public sealed class UpdateNodeRequest : UiSessionRequest
@@ -107,7 +106,6 @@ public sealed class UpdateNodeRequest : UiSessionRequest
 
     public NodeWrite? Detail { get; set; }
 
-    public string? AcknowledgedWarningFingerprint { get; set; }
 }
 
 public sealed class CopyNodeRequest : UiSessionRequest
@@ -116,7 +114,6 @@ public sealed class CopyNodeRequest : UiSessionRequest
 
     public string? CategoryId { get; set; }
 
-    public string? AcknowledgedWarningFingerprint { get; set; }
 }
 
 public sealed class CreateCategoryRequest : UiSessionRequest
@@ -151,7 +148,6 @@ public sealed class DeleteNodesRequest : UiSessionRequest
 {
     public List<string>? NodeIds { get; set; }
 
-    public bool ReleaseHeldKeys { get; set; }
 }
 
 public sealed class RecordingIdRequest : UiSessionRequest
@@ -173,7 +169,6 @@ public sealed class CommitImportRequest : UiSessionRequest
 {
     public string? PreviewId { get; set; }
 
-    public string? AcknowledgedWarningFingerprint { get; set; }
 }
 
 public sealed class ExportNodesRequest : UiSessionRequest
@@ -195,7 +190,6 @@ public sealed class InitializeDataDto
 
     public required RunPageDto Runs { get; init; }
 
-    public required HeldKeysSnapshotDto HeldKeys { get; init; }
 
     /// <summary>Optional node to select after bootstrap (search-result deep link).</summary>
     public string? FocusNodeId { get; init; }
@@ -378,32 +372,6 @@ public sealed class RunPageDto
     public IReadOnlyList<RunSnapshotDto> Active { get; init; } = [];
 
     public IReadOnlyList<RunSnapshotDto> Recent { get; init; } = [];
-}
-
-public sealed class HeldKeyItemDto
-{
-    public required string Key { get; init; }
-
-    public required string Display { get; init; }
-
-    public required string SourceRunId { get; init; }
-
-    public required string SourceNodeId { get; init; }
-
-    public DateTimeOffset HeldSince { get; init; }
-
-    public bool Uncertain { get; init; }
-}
-
-public sealed class HeldKeysSnapshotDto
-{
-    public long SequenceNumber { get; init; }
-
-    public IReadOnlyList<HeldKeyItemDto> Keys { get; init; } = [];
-
-    public bool IsReleasing { get; init; }
-
-    public bool SenderAvailable { get; init; } = true;
 }
 
 public sealed class CancelRunResultDto

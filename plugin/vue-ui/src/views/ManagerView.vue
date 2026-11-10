@@ -16,13 +16,11 @@ import { useManagerStore } from '@/stores/useManagerStore';
 import CategorySidebar from '@/components/keysender/CategorySidebar.vue';
 import NodeList from '@/components/keysender/NodeList.vue';
 import NodeEditSheet from '@/components/keysender/NodeEditSheet.vue';
-import ConfirmSequenceDialog from '@/components/keysender/ConfirmSequenceDialog.vue';
 import DirtyLeaveDialog from '@/components/keysender/DirtyLeaveDialog.vue';
 import ImportPreviewDialog from '@/components/keysender/ImportPreviewDialog.vue';
 import DeleteConfirmDialog from '@/components/keysender/DeleteConfirmDialog.vue';
 import DeleteCategoryDialog from '@/components/keysender/DeleteCategoryDialog.vue';
 import CategoryEditDialog from '@/components/keysender/CategoryEditDialog.vue';
-import ReleaseAndRecordDialog from '@/components/keysender/ReleaseAndRecordDialog.vue';
 
 const store = useManagerStore();
 const searchText = ref(store.query);
@@ -156,12 +154,10 @@ function onSearchInput(value) {
     </div>
 
     <NodeEditSheet />
-    <ConfirmSequenceDialog />
     <DirtyLeaveDialog />
     <ImportPreviewDialog />
     <DeleteConfirmDialog />
     <DeleteCategoryDialog />
     <CategoryEditDialog />
-    <ReleaseAndRecordDialog />
   </div>
 </template>

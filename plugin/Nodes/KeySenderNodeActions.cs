@@ -91,18 +91,8 @@ internal static class KeySenderNodeActions
             CancellationToken cancellationToken)
         {
             var config = KeySenderRegister.Instance.ComponentContext.Resolve<ConfigurationService>();
-            var copy = await config.CopyAsync(result.OwnerObject.Id, acknowledgedWarningFingerprint: null, cancellationToken)
+            var copy = await config.CopyAsync(result.OwnerObject.Id, cancellationToken)
                 .ConfigureAwait(false);
-            if (!copy.Ok && copy.Code == Validation.ValidationCodes.SequenceConfirmationRequired)
-            {
-                // Search-result path cannot show the confirm dialog yet; re-submit with fingerprint.
-                copy = await config.CopyAsync(
-                        result.OwnerObject.Id,
-                        copy.Analysis!.WarningFingerprint,
-                        cancellationToken)
-                    .ConfigureAwait(false);
-            }
-
             if (!copy.Ok)
             {
                 throw new InvalidOperationException(copy.Message ?? copy.Code ?? "Copy failed.");

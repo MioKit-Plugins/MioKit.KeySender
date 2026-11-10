@@ -21,7 +21,7 @@ import RecorderPanel from './RecorderPanel.vue';
 const store = useManagerStore();
 
 const open = computed({
-  get: () => !!store.draft,
+  get: () => !!store.draft || store.draftLoading,
   set: (v) => {
     if (!v) store.requestCloseEditor();
   },
@@ -83,7 +83,7 @@ const title = computed(() => {
             <Button
               size="sm"
               class="min-w-20"
-              :disabled="store.saving || !store.isDirty"
+              :disabled="store.saving || store.draftLoading || store.recordingInProgress || !store.isDirty"
               @click="store.saveDraft()"
             >
               {{ store.saving ? '保存中' : '保存' }}
@@ -92,7 +92,7 @@ const title = computed(() => {
               size="sm"
               variant="outline"
               class="min-w-16"
-              :disabled="!draft.nodeId"
+              :disabled="!draft.nodeId || store.saving || store.recordingInProgress"
               @click="store.copySelectedOrDraft()"
             >
               复制
@@ -101,7 +101,7 @@ const title = computed(() => {
               size="sm"
               variant="destructive"
               class="min-w-16"
-              :disabled="!draft.nodeId || !draft.canDelete"
+              :disabled="!draft.nodeId || !draft.canDelete || store.saving || store.recordingInProgress"
               @click="store.requestDelete([draft.nodeId])"
             >
               删除
@@ -118,7 +118,7 @@ const title = computed(() => {
         >
           <p v-if="hardErrorSummary" class="text-destructive">硬错误：{{ hardErrorSummary }}</p>
           <p v-else class="text-warning-foreground dark:text-warning">
-            警告：{{ warningSummary }}（保存时需确认；不会自动补抬起）
+            提示：{{ warningSummary }}
           </p>
         </div>
 
@@ -203,6 +203,15 @@ const title = computed(() => {
             <EventList v-else class="min-h-0 flex-1" />
           </TabsContent>
         </Tabs>
+      </template>
+      <template v-else-if="store.draftLoading">
+        <SheetHeader class="shrink-0 border-b border-border px-5 py-4 text-left">
+          <SheetTitle>正在加载节点</SheetTitle>
+          <SheetDescription>正在读取节点配置</SheetDescription>
+        </SheetHeader>
+        <div class="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+          正在加载详情…
+        </div>
       </template>
     </SheetContent>
   </Sheet>

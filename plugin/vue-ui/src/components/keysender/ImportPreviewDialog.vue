@@ -25,12 +25,9 @@ const open = computed({
 const preview = computed(() => store.importPreview);
 const hasHardErrors = computed(() =>
   (preview.value?.items ?? []).some((i) => (i.errors?.length ?? 0) > 0));
-const hasWarnings = computed(() =>
-  (preview.value?.items ?? []).some((i) => (i.warnings?.length ?? 0) > 0));
 
 async function onCommit() {
-  const fp = hasWarnings.value ? (preview.value?.warningFingerprint ?? null) : null;
-  await store.commitImport(fp);
+  await store.commitImport();
 }
 </script>
 
@@ -40,7 +37,7 @@ async function onCommit() {
       <DialogHeader>
         <DialogTitle>导入预览</DialogTitle>
         <DialogDescription>
-          硬错误将阻止整包导入。仅有配对警告时需明确确认后创建副本。
+          导入文件中的按键序列。按键配对和执行效果由配置决定。
         </DialogDescription>
       </DialogHeader>
 
@@ -79,7 +76,7 @@ async function onCommit() {
           :disabled="!preview?.canImport || hasHardErrors"
           @click="onCommit"
         >
-          {{ hasWarnings ? '确认警告并创建副本' : '创建副本' }}
+          创建副本
         </Button>
       </DialogFooter>
     </DialogContent>
