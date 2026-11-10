@@ -3,7 +3,7 @@ using KeySender.Views;
 namespace KeySender;
 
 public class KeySenderPlugin : PluginBase, IPluginConfigWindowFeature,
-    ISearchableFeature, IInvokeFeature, IInvocationPresentationFeature
+    ISearchableFeature, IInvokeFeature, IInvocationPresentationFeature,IUseFeature
 {
     public KeySenderPlugin() : base(KeySenderConst.PluginId)
     {
@@ -90,11 +90,11 @@ public class KeySenderPlugin : PluginBase, IPluginConfigWindowFeature,
         return ValueTask.CompletedTask;
     }
 
-    public Task InvokeAsync(InvokeContext context)
+    public async Task InvokeAsync(InvokeContext context)
     {
         context.CancellationToken.ThrowIfCancellationRequested();
         OpenPluginConfigWindow();
-        return Task.CompletedTask;
+        await this.IncreaseAsync().ConfigureAwait(false);
     }
 
     public InvocationPresentation GetPresentation(InvocationPresentationRequest request) => new()
