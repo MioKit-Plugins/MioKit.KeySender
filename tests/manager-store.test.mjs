@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
-import { emptyDraft, newEventId, toNodeWrite } from '../plugin/vue-ui/src/api/types.js';
+import { delayErrorMessage, emptyDraft, newEventId, toNodeWrite } from '../plugin/vue-ui/src/api/types.js';
 import { moveEvent } from '../plugin/vue-ui/src/lib/event-list.js';
 import { createKeySenderMock } from '../plugin/vue-ui/src/api/key-sender.mock.js';
 
@@ -16,7 +16,7 @@ function createStore(api, errors = []) {
     LIST_SCOPE_ALL: 'all', LIST_SCOPE_BUILTIN: 'builtin', LIST_SCOPE_CATEGORY: 'category',
     getKeySenderApi: () => api,
     withSession: (extra) => api.windowSessionId ? { windowSessionId: api.windowSessionId, ...extra } : extra,
-    emptyDraft, newEventId, toNodeWrite,
+    delayErrorMessage, emptyDraft, newEventId, toNodeWrite,
     setTimeout, clearTimeout,
     toast: { error(...args) { errors.push(args); }, message() {}, success() {} },
   };
@@ -73,12 +73,15 @@ test('an empty completed recording clears the session without altering the draft
 
 test('a pairing warning does not interrupt saving a user sequence', async () => {
   let created = 0;
+  const warnings = [{ code: 'unclosed_key_down' }];
   const store = createStore({
-    async ValidateDraftAsync() { return { ok: true, data: { valid: true, errors: [], warnings: [{ code: 'unclosed_key_down' }] } }; },
-    async CreateNodeAsync(request) { created++; return { ok: true, data: { nodeId: 'node', canEdit: true, canDelete: true } }; },
+    async ValidateDraftAsync() { return { ok: true, data: { valid: true, warnings } }; },
+    async CreateNodeAsync() { created++; return { ok: true, data: { nodeId: 'node', canEdit: true, canDelete: true } }; },
     async GetListAsync() { return { ok: true, data: { items: [], total: 0 } }; },
   });
   store.draft.sequence.events = [event];
+  await store.validateDraftLocal();
+  assert.deepEqual(store.draftWarnings, warnings);
   assert.equal(await store.saveDraft(), true);
   assert.equal(created, 1);
 });
@@ -102,17 +105,18 @@ test('rapid edits of 10000 events trigger one validation of the final draft', as
   store.dispose();
 });
 
-test('an older validation response cannot replace the current draft diagnostics', async () => {
+test('an older validation response cannot replace the current draft warnings', async () => {
   const responses = [];
+  const warnings = [{ message: 'current warning' }];
   const store = createStore({ ValidateDraftAsync: () => new Promise(resolve => responses.push(resolve)) });
   const old = store.validateDraftLocal();
   store.setEvents([event]);
   const current = store.validateDraftLocal();
-  responses[1]({ ok: true, data: { valid: true, errors: [], warnings: [] } });
+  responses[1]({ ok: true, data: { warnings } });
   await current;
-  responses[0]({ ok: true, data: { valid: false, errors: [{ message: 'outdated' }], warnings: [] } });
+  responses[0]({ ok: true, data: { warnings: [{ message: 'outdated warning' }] } });
   assert.equal(await old, null);
-  assert.equal(store.draftErrors.length, 0);
+  assert.deepEqual(store.draftWarnings, warnings);
   store.dispose();
 });
 
@@ -293,34 +297,46 @@ test('save proceeds independently of an older unfinished diagnostic request', as
   store.draft = emptyDraft({ ...savedNode, sequence: { version: 2, events: [event] } });
   const validating = store.validateDraftLocal();
   assert.equal(await store.saveDraft(), true);
-  diagnostic.resolve({ ok: true, data: { valid: false, errors: [{ message: 'obsolete' }], warnings: [] } });
+  diagnostic.resolve({ ok: true, data: { warnings: [{ message: 'obsolete warning' }] } });
   assert.equal(await validating, null);
-  assert.equal(store.draftErrors.length, 0);
+  assert.equal(store.draftWarnings.length, 0);
   store.dispose();
 });
 
-test('a save validation failure retains the dirty draft and displays field errors', async () => {
-  const store = createStore({ async UpdateNodeAsync() {
-    return { ok: false, error: { message: 'invalid delay', details: { errors: [{ fieldPath: 'beforeDelayMs', message: 'invalid delay' }], warnings: [] } } };
-  } });
-  store.draft = emptyDraft({ ...savedNode, beforeDelayMs: -1 });
+test('a save validation failure retains the dirty draft and shows the server field error', async () => {
+  const errors = [];
+  const issue = { fieldPath: 'sequence.events[0].key', message: 'unknown key' };
+  const invalidEvent = { ...event, key: 'UnrecognizedKey' };
+  const store = createStore({
+    async UpdateNodeAsync() {
+      return { ok: false, error: { message: 'invalid sequence', details: { errors: [issue], warnings: [] } } };
+    },
+  }, errors);
+  store.draft = emptyDraft({ ...savedNode, sequence: { version: 2, events: [invalidEvent] } });
   assert.equal(await store.saveDraft(), false);
-  assert.equal(store.draft.beforeDelayMs, -1);
+  assert.equal(store.draft.sequence.events[0].key, invalidEvent.key);
   assert.equal(store.isDirty, true);
-  assert.equal(store.draftErrors[0].fieldPath, 'beforeDelayMs');
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0][0], '保存失败');
+  assert.equal(errors[0][1].description, issue.message);
   store.dispose();
 });
 
-test('late save errors cannot overwrite diagnostics for newer edits', async () => {
+test('warnings from a failed save cannot overwrite warnings for newer edits', async () => {
   const pending = deferred();
-  const store = createStore({ UpdateNodeAsync: () => pending.promise });
-  store.draft = emptyDraft({ ...savedNode, beforeDelayMs: -1 });
+  const warnings = [{ message: 'current warning' }];
+  const store = createStore({
+    UpdateNodeAsync: () => pending.promise,
+    async ValidateDraftAsync() { return { ok: true, data: { warnings } }; },
+  });
+  store.draft = emptyDraft({ ...savedNode, sequence: { version: 2, events: [event] } });
   const saving = store.saveDraft();
+  assert.equal(store.saving, true);
   store.patchDraft({ beforeDelayMs: 100 });
   await store.validateDraftLocal();
-  pending.resolve({ ok: false, error: { details: { errors: [{ message: 'old invalid delay' }] } } });
+  pending.resolve({ ok: false, error: { details: { warnings: [{ message: 'outdated save warning' }] } } });
   assert.equal(await saving, false);
-  assert.equal(store.draftErrors.length, 0);
+  assert.deepEqual(store.draftWarnings, warnings);
   store.dispose();
 });
 

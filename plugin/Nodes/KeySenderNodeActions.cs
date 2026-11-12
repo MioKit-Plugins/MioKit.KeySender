@@ -18,14 +18,10 @@ internal static class KeySenderNodeActions
         if (BuiltInKeyCatalog.IsBuiltIn(node.Id))
         {
             actions.Add(new OpenNodeAction("查看", LucideIconKind.Eye));
-            actions.Add(new CopyNodeAction("复制为自定义"));
-            actions.Add(new ExportNodeAction());
         }
         else
         {
             actions.Add(new OpenNodeAction("编辑", LucideIconKind.Pencil));
-            actions.Add(new CopyNodeAction("复制"));
-            actions.Add(new DeleteNodeAction());
         }
 
         actions.Add(isPinned ? CancelPinAction.Instance : PinAction.Instance);

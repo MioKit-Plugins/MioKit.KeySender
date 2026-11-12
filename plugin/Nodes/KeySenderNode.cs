@@ -26,6 +26,8 @@ public class KeySenderNode : MioObject,
             PinnedExtension.IsPinnedProperty,
             PinnedExtension.PinnedOrderProperty,
             HotkeyExtension.HotkeyProperty,
+            RecentExtension.UseCountProperty,
+            RecentExtension.LastUseTimeProperty,
         ];
     }
 

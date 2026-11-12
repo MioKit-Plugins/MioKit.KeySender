@@ -2,13 +2,30 @@ using KeySender.Views;
 
 namespace KeySender;
 
-public class KeySenderPlugin : PluginBase, IPluginConfigWindowFeature,
-    ISearchableFeature, IInvokeFeature, IInvocationPresentationFeature,IUseFeature
+public class KeySenderPlugin : PluginBase,
+    IPluginConfigWindowFeature,
+    ISearchableFeature,
+    IHotkeyFeature,
+    IInvocationPresentationFeature,
+    IUseFeature,
+    IPinnedFeature,
+    IAliasNameFeature,
+    IResultActionProviderFeature
 {
     public KeySenderPlugin() : base(KeySenderConst.PluginId)
     {
         Name = "模拟按键";
         Description = "录制并回放有序键盘事件序列";
+        PreloadPropertySource =
+        [
+            ..PreloadPropertySource,
+            AliasNameExtension.AliasNameProperty,
+            HotkeyExtension.HotkeyProperty,
+            PinnedExtension.IsPinnedProperty,
+            PinnedExtension.PinnedOrderProperty,
+            RecentExtension.UseCountProperty,
+            RecentExtension.LastUseTimeProperty,
+        ];
     }
 
     public override Guid MioType => KeySenderConst.PluginType;
@@ -100,9 +117,8 @@ public class KeySenderPlugin : PluginBase, IPluginConfigWindowFeature,
             return;
         }
 
-        var group = this.FindFirstDescendant<KeySenderSearchGroup>(
-            g => g.Id == KeySenderConst.SearchGroupId)
-            ?? throw new InvalidOperationException("Search group missing after EnsureTreeLoadedAsync.");
+        var group = this.FindFirstDescendant<KeySenderSearchGroup>(g => g.Id == KeySenderConst.SearchGroupId)
+                    ?? throw new InvalidOperationException("Search group missing after EnsureTreeLoadedAsync.");
 
         group.Name = "模拟按键";
         group.Description = "搜索并执行按键序列节点";
@@ -121,8 +137,7 @@ public class KeySenderPlugin : PluginBase, IPluginConfigWindowFeature,
 
     private async Task RemoveLegacyManagerNodeAsync(IMioDataProvider data)
     {
-        var group = this.FindFirstDescendant<KeySenderSearchGroup>(
-            g => g.Id == KeySenderConst.SearchGroupId);
+        var group = this.FindFirstDescendant<KeySenderSearchGroup>(g => g.Id == KeySenderConst.SearchGroupId);
         var legacy = group?.Children.FirstOrDefault(x => x.Id == KeySenderConst.ManagerNodeId);
         if (legacy is not null)
         {
@@ -140,5 +155,18 @@ public class KeySenderPlugin : PluginBase, IPluginConfigWindowFeature,
                 "Failed to delete legacy manager node {ManagerNodeId}.",
                 KeySenderConst.ManagerNodeId);
         }
+    }
+
+    public ValueTask<IEnumerable<ISearchResultAction>> GetActionAsync(SearchResult searchResult)
+    {
+        var isPinned = this.GetIsPinned() == true;
+        var actions = new List<ISearchResultAction>
+        {
+            isPinned ? CancelPinAction.Instance : PinAction.Instance,
+            AliasNameAction.Instance,
+            HotKeyAction.Instance
+        };
+
+        return ValueTask.FromResult<IEnumerable<ISearchResultAction>>(actions);
     }
 }

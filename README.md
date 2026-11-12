@@ -104,4 +104,4 @@ pnpm --dir plugin/vue-ui build
 
 Linux 首次安装浏览器时可使用 `playwright install --with-deps chromium` 安装系统依赖。Playwright 会启动独立的 Vite 服务，并在 Chromium 里操作实际 Vue 页面；数据、录制与文件对话框由浏览器 Mock 提供。C# 测试使用替身验证执行、录制、存储及桥接服务，无需向桌面注入按键。
 
-[测试工作流](.github/workflows/tests.yml) 在推送分支和提交 PR 时运行。宿主真机检查和已知问题见[代码审查与测试覆盖](docs/07-代码审查与测试覆盖.md)。
+[测试工作流](.github/workflows/tests.yml) 在打开、重新打开或更新 PR 时自动运行，也可以在 GitHub Actions 的 **Tests** 页面选择 **Run workflow** 手动运行。宿主真机检查和已知问题见[代码审查与测试覆盖](docs/07-代码审查与测试覆盖.md)。
