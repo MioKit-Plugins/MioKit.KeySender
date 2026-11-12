@@ -17,6 +17,16 @@ internal sealed class RecordingMioDataProvider : IMioDataProvider
 
     public int SaveObjectsCount { get; private set; }
 
+    public Dictionary<string, Dictionary<IAttachEavProperty, object>> SavedValues { get; } = new(StringComparer.Ordinal);
+
+    public List<IReadOnlyDictionary<string, string?>> ParentUpdates { get; } = [];
+
+    public bool FailParentUpdate { get; set; }
+
+    public HashSet<string> FailedDeleteIds { get; } = new(StringComparer.Ordinal);
+
+    public List<string> DeleteAttempts { get; } = [];
+
     public RecordingMioDataProvider(
         IEnumerable<string>? categoryIds = null,
         IEnumerable<string>? nodeIds = null,
@@ -99,14 +109,49 @@ internal sealed class RecordingMioDataProvider : IMioDataProvider
         Dictionary<MioObject, Dictionary<IAttachEavProperty, object>>? propertyValues = null)
     {
         SaveObjectsCount++;
+        if (propertyValues is not null)
+        {
+            foreach (var (node, values) in propertyValues)
+            {
+                if (!SavedValues.TryGetValue(node.Id, out var saved))
+                {
+                    saved = [];
+                    SavedValues.Add(node.Id, saved);
+                }
+
+                foreach (var (property, value) in values)
+                {
+                    saved[property] = value;
+                }
+            }
+        }
+
         return Task.CompletedTask;
     }
 
-    public Task DeleteAsync(string objectId) => Task.CompletedTask;
+    public Task DeleteAsync(string objectId)
+    {
+        DeleteAttempts.Add(objectId);
+        if (FailedDeleteIds.Contains(objectId))
+        {
+            return Task.FromException(new IOException("Simulated delete failure."));
+        }
+
+        _categoryIds.Remove(objectId);
+        _nodeIds.Remove(objectId);
+        SavedValues.Remove(objectId);
+        return Task.CompletedTask;
+    }
 
     public Task DeleteAsync(IEnumerable<string> mioObjectIds) => Task.CompletedTask;
 
-    public Task DeleteManyAsync(IReadOnlyCollection<string> objectIds) => Task.CompletedTask;
+    public async Task DeleteManyAsync(IReadOnlyCollection<string> objectIds)
+    {
+        foreach (var id in objectIds)
+        {
+            await DeleteAsync(id);
+        }
+    }
 
     public Task DeleteByTypeAsync(Guid mioType) => Task.CompletedTask;
 
@@ -157,14 +202,20 @@ internal sealed class RecordingMioDataProvider : IMioDataProvider
     public Task<bool> ExistsAsync(string objectId)
         => Task.FromResult(
             _categoryIds.Contains(objectId, StringComparer.Ordinal)
-            || _nodeIds.Contains(objectId, StringComparer.Ordinal));
+            || _nodeIds.Contains(objectId, StringComparer.Ordinal)
+            || SavedValues.ContainsKey(objectId));
 
     public Task<int> CountByTypeAsync(Guid mioType) => Task.FromResult(0);
 
     public Task UpdateParentAsync(string objectId, string? parentId) => Task.CompletedTask;
 
     public Task UpdateParentsAsync(IReadOnlyDictionary<string, string?> parentMap)
-        => Task.CompletedTask;
+    {
+        ParentUpdates.Add(new Dictionary<string, string?>(parentMap, StringComparer.Ordinal));
+        return FailParentUpdate
+            ? Task.FromException(new IOException("Simulated parent relation failure."))
+            : Task.CompletedTask;
+    }
 
     public Task<PagedResult<T>> SearchAsync<T>(EavQuery query) where T : MioObject
         => Task.FromResult(PagedResult<T>.Empty());

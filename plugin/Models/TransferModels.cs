@@ -2,6 +2,8 @@ using KeySender.Validation;
 
 namespace KeySender.Models;
 
+public sealed record TransferCategory(string Name, string Description);
+
 public sealed class TransferParseResult
 {
     public bool Ok { get; init; }
@@ -11,6 +13,10 @@ public sealed class TransferParseResult
     public string? Message { get; init; }
 
     public IReadOnlyList<NodeWrite> Nodes { get; init; } = [];
+
+    public IReadOnlyList<TransferCategory> Categories { get; init; } = [];
+
+    public IReadOnlyList<int?> CategoryIndices { get; init; } = [];
 
     public IReadOnlyList<SequenceAnalysisResult> Analyses { get; init; } = [];
 
@@ -36,6 +42,8 @@ public sealed class ImportPreviewItem
     public required string Name { get; init; }
 
     public required string Description { get; init; }
+
+    public string? CategoryName { get; init; }
 
     public int EventCount { get; init; }
 
@@ -79,6 +87,8 @@ public sealed class TransferOperationResult
 
     public IReadOnlyList<string>? CreatedIds { get; init; }
 
+    public IReadOnlyList<string>? CreatedCategoryIds { get; init; }
+
     public IReadOnlyList<NodeDetail>? CreatedItems { get; init; }
 
     public bool Persisted { get; init; }
@@ -95,11 +105,13 @@ public sealed class TransferOperationResult
 
     public static TransferOperationResult SuccessCommit(
         IReadOnlyList<string> createdIds,
-        IReadOnlyList<NodeDetail> createdItems) => new()
+        IReadOnlyList<NodeDetail> createdItems,
+        IReadOnlyList<string>? createdCategoryIds = null) => new()
     {
         Ok = true,
         CreatedIds = createdIds,
         CreatedItems = createdItems,
+        CreatedCategoryIds = createdCategoryIds,
     };
 
     public static TransferOperationResult SuccessExport(int count, string? fileName = null) => new()
@@ -113,12 +125,14 @@ public sealed class TransferOperationResult
         string code,
         string? message = null,
         bool persisted = false,
-        IReadOnlyList<string>? createdIds = null) => new()
+        IReadOnlyList<string>? createdIds = null,
+        IReadOnlyList<string>? createdCategoryIds = null) => new()
     {
         Ok = false,
         Code = code,
         Message = message,
         Persisted = persisted,
         CreatedIds = createdIds,
+        CreatedCategoryIds = createdCategoryIds,
     };
 }

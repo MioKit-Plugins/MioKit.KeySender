@@ -12,6 +12,8 @@ public sealed class RecordingService : IDisposable, IPluginLifecycleComponent
     private readonly IMonotonicClock _clock;
     private readonly object _sync = new();
     private Session? _session;
+    // The capture may be in Review or Cancelled while its hook still owns the reservation.
+    private bool _stoppingHook;
     private bool _disposed;
 
     public RecordingService(IInputActivityGate gate, IKeyboardHookSource hook,
@@ -42,22 +44,23 @@ public sealed class RecordingService : IDisposable, IPluginLifecycleComponent
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (_session?.State is RecordingState.Recording or RecordingState.Review)
+            if (_stoppingHook || _session?.State is RecordingState.Recording or RecordingState.Review)
                 return RecordingOperationResult.Fail(ValidationCodes.RecordingBusy,
-                    "A recording session is already active.", SnapshotUnlocked());
+                    "A recording session is active or stopping.", SnapshotUnlocked());
             if (!_gate.TryReserveForRecording(out var reject))
                 return RecordingOperationResult.Fail(reject ?? ValidationCodes.RecordingUnavailable);
 
-            _session = new Session
-            {
-                RecordingId = Guid.NewGuid().ToString("D"), WindowSessionId = windowSessionId,
-                Window = _windows.GetForegroundWindow(), StartedAtMs = _clock.ElapsedMilliseconds,
-            };
             try
             {
-                if (_session.Window == 0)
+                var session = new Session
+                {
+                    RecordingId = Guid.NewGuid().ToString("D"), WindowSessionId = windowSessionId,
+                    Window = _windows.GetForegroundWindow(), StartedAtMs = _clock.ElapsedMilliseconds,
+                };
+                if (session.Window == 0)
                     throw new InvalidOperationException("Recording window is not foreground.");
-                _hook.Start(OnHookEvent);
+                _session = session;
+                _hook.Start(ev => OnHookEvent(session, ev));
             }
             catch (Exception ex)
             {
@@ -84,6 +87,7 @@ public sealed class RecordingService : IDisposable, IPluginLifecycleComponent
             if (session.State == RecordingState.Review)
                 return RecordingOperationResult.Success(SnapshotUnlocked()!, FragmentUnlocked());
             if (notice is not null) session.Notices.Add(notice);
+            _stoppingHook = true;
             session.State = RecordingState.Review;
             session.SequenceNumber++;
             snapshot = SnapshotUnlocked()!;
@@ -108,6 +112,7 @@ public sealed class RecordingService : IDisposable, IPluginLifecycleComponent
     public RecordingOperationResult Cancel(string recordingId)
     {
         RecordingSnapshot snapshot;
+        bool stop;
         lock (_sync)
         {
             if (!TryGetSession(recordingId, out var session))
@@ -115,12 +120,16 @@ public sealed class RecordingService : IDisposable, IPluginLifecycleComponent
                 {
                     RecordingId = recordingId, WindowSessionId = "", State = RecordingState.Cancelled,
                 });
+            if (session.State == RecordingState.Cancelled)
+                return RecordingOperationResult.Success(SnapshotUnlocked()!);
+            stop = session.State == RecordingState.Recording;
+            if (stop) _stoppingHook = true;
             session.Events.Clear();
             session.State = RecordingState.Cancelled;
             session.SequenceNumber++;
             snapshot = SnapshotUnlocked()!;
         }
-        StopHook();
+        if (stop) StopHook();
         RaiseChanged(snapshot);
         return RecordingOperationResult.Success(snapshot);
     }
@@ -166,14 +175,15 @@ public sealed class RecordingService : IDisposable, IPluginLifecycleComponent
         return RecordingOperationResult.Success(snapshot, fragment);
     }
 
-    private KeyboardHookAction OnHookEvent(RawKeyboardEvent ev)
+    private KeyboardHookAction OnHookEvent(Session session, RawKeyboardEvent ev)
     {
         RecordingSnapshot? changed = null;
         var stop = false;
         var action = KeyboardHookAction.PassThrough;
         lock (_sync)
         {
-            if (_session is not { State: RecordingState.Recording } session || ev.Injected || ev.LowerIntegrityInjected)
+            if (!ReferenceEquals(_session, session) || session.State != RecordingState.Recording
+                || ev.Injected || ev.LowerIntegrityInjected)
                 return action;
             if (_windows.GetForegroundWindow() != session.Window)
             {
@@ -202,6 +212,7 @@ public sealed class RecordingService : IDisposable, IPluginLifecycleComponent
             }
             if (stop)
             {
+                _stoppingHook = true;
                 session.State = RecordingState.Review;
                 session.SequenceNumber++;
                 changed = SnapshotUnlocked();
@@ -222,19 +233,31 @@ public sealed class RecordingService : IDisposable, IPluginLifecycleComponent
     {
         // Callback threads also take _sync, so stop/join only after releasing that lock.
         try { _hook.Stop(); }
-        finally { _gate.EndRecordingReservation(); }
+        finally
+        {
+            lock (_sync)
+            {
+                _gate.EndRecordingReservation();
+                _stoppingHook = false;
+            }
+        }
     }
 
     public void Dispose()
     {
+        bool ownsReservation;
         lock (_sync)
         {
             if (_disposed) return;
             _disposed = true;
+            ownsReservation = _session?.State == RecordingState.Recording;
             _session = null;
         }
         try { _hook.Dispose(); }
-        finally { _gate.EndRecordingReservation(); }
+        finally
+        {
+            if (ownsReservation) _gate.EndRecordingReservation();
+        }
     }
 
     private bool TryGetSession(string id, out Session session)

@@ -65,7 +65,8 @@ public static class KeySenderConst
     public const string EventTypeKeyUp = "keyUp";
 
     public const string TransferFormat = "miokit.key-sender";
-    public const int TransferFormatVersion = 2;
+    public const int TransferFormatVersionWithoutCategories = 2;
+    public const int TransferFormatVersion = 3;
     public const int TransferMaxBytes = 5 * 1024 * 1024;
     public const int TransferMaxNodes = 500;
     public const int TransferMaxJsonDepth = 16;

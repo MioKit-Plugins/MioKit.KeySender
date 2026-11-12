@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -7,7 +8,7 @@ using KeySender.Validation;
 namespace KeySender.Services;
 
 /// <summary>
-/// Pure v2 .miokeys parse/validate (design 05). No I/O, no DI.
+/// Pure .miokeys parse, validation and writing (design 05).
 /// </summary>
 public static class TransferPackageParser
 {
@@ -19,6 +20,21 @@ public static class TransferPackageParser
     private static readonly HashSet<string> NodeFields = new(StringComparer.Ordinal)
     {
         "name", "description", "beforeDelayMs", "afterDelayMs", "sequence",
+    };
+
+    private static readonly HashSet<string> CategorizedRootFields = new(RootFields, StringComparer.Ordinal)
+    {
+        "categories",
+    };
+
+    private static readonly HashSet<string> CategorizedNodeFields = new(NodeFields, StringComparer.Ordinal)
+    {
+        "categoryIndex",
+    };
+
+    private static readonly HashSet<string> CategoryFields = new(StringComparer.Ordinal)
+    {
+        "name", "description",
     };
 
     private static readonly HashSet<string> SequenceFields = new(StringComparer.Ordinal)
@@ -64,6 +80,7 @@ public static class TransferPackageParser
                 utf8Json.ToArray(),
                 new JsonDocumentOptions
                 {
+                    AllowDuplicateProperties = false,
                     AllowTrailingCommas = false,
                     CommentHandling = JsonCommentHandling.Disallow,
                     MaxDepth = KeySenderConst.TransferMaxJsonDepth,
@@ -89,32 +106,109 @@ public static class TransferPackageParser
         return Parse(Encoding.UTF8.GetBytes(json));
     }
 
-    public static void WritePackage(Stream output, IReadOnlyList<NodeWrite> nodes)
+    public static void WritePackage(
+        Stream output,
+        IReadOnlyList<NodeWrite> nodes,
+        IReadOnlyList<TransferCategory>? categories = null,
+        IReadOnlyList<int?>? categoryIndices = null)
+    {
+        if (!TryWritePackage(output, nodes, categories, categoryIndices))
+        {
+            throw new InvalidDataException($"Package exceeds {KeySenderConst.TransferMaxBytes} bytes.");
+        }
+    }
+
+    internal static bool TryWritePackage(
+        Stream output,
+        IReadOnlyList<NodeWrite> nodes,
+        IReadOnlyList<TransferCategory>? categories,
+        IReadOnlyList<int?>? categoryIndices)
     {
         ArgumentNullException.ThrowIfNull(output);
         ArgumentNullException.ThrowIfNull(nodes);
 
-        using var writer = new Utf8JsonWriter(output, new JsonWriterOptions { Indented = true, SkipValidation = false });
+        var categoryCount = categories?.Count ?? 0;
+        if (categoryIndices is not null && categoryIndices.Count != nodes.Count)
+        {
+            throw new ArgumentException("A category index is required for each node.", nameof(categoryIndices));
+        }
+
+        if (categoryIndices is not null && categoryIndices.Any(index => index is < 0 || index >= categoryCount))
+        {
+            throw new ArgumentException("Category index is out of range.", nameof(categoryIndices));
+        }
+
+        if (categoryCount > KeySenderConst.TransferMaxNodes)
+        {
+            throw new ArgumentException($"Too many categories (limit {KeySenderConst.TransferMaxNodes}).", nameof(categories));
+        }
+
+        if (categories is not null)
+        {
+            foreach (var category in categories)
+            {
+                if (GetCategoryError(category.Name, category.Description) is { } error)
+                {
+                    throw new ArgumentException(error, nameof(categories));
+                }
+            }
+        }
+
+        // Stage the UTF-8 payload until it fits the import limit, even for non-seekable output streams.
+        var buffer = new ArrayBufferWriter<byte>();
+        using var writer = new Utf8JsonWriter(buffer, new JsonWriterOptions { Indented = true });
         writer.WriteStartObject();
         writer.WriteString("format", KeySenderConst.TransferFormat);
-        writer.WriteNumber("formatVersion", KeySenderConst.TransferFormatVersion);
+        writer.WriteNumber("formatVersion", categoryCount > 0
+            ? KeySenderConst.TransferFormatVersion
+            : KeySenderConst.TransferFormatVersionWithoutCategories);
+
+        if (categories is { Count: > 0 })
+        {
+            writer.WriteStartArray("categories");
+            foreach (var category in categories)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("name", category.Name);
+                writer.WriteString("description", category.Description);
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+        }
+
         writer.WritePropertyName("nodes");
         writer.WriteStartArray();
 
-        foreach (var node in nodes)
+        for (var index = 0; index < nodes.Count; index++)
         {
-            WriteNode(writer, node);
+            WriteNode(writer, nodes[index], categoryIndices?[index]);
+            if (writer.BytesCommitted + writer.BytesPending > KeySenderConst.TransferMaxBytes)
+            {
+                return false;
+            }
         }
 
         writer.WriteEndArray();
         writer.WriteEndObject();
         writer.Flush();
+
+        if (buffer.WrittenCount > KeySenderConst.TransferMaxBytes)
+        {
+            return false;
+        }
+
+        output.Write(buffer.WrittenSpan);
+        return true;
     }
 
-    public static string WritePackageString(IReadOnlyList<NodeWrite> nodes)
+    public static string WritePackageString(
+        IReadOnlyList<NodeWrite> nodes,
+        IReadOnlyList<TransferCategory>? categories = null,
+        IReadOnlyList<int?>? categoryIndices = null)
     {
         using var ms = new MemoryStream();
-        WritePackage(ms, nodes);
+        WritePackage(ms, nodes, categories, categoryIndices);
         return Encoding.UTF8.GetString(ms.ToArray());
     }
 
@@ -123,11 +217,6 @@ public static class TransferPackageParser
         if (root.ValueKind != JsonValueKind.Object)
         {
             return TransferParseResult.Fail(ValidationCodes.InvalidFormat, "Root must be a JSON object.");
-        }
-
-        if (!ValidateObjectFields(root, RootFields, out var fieldError))
-        {
-            return TransferParseResult.Fail(ValidationCodes.InvalidFormat, fieldError);
         }
 
         if (!TryGetString(root, "format", required: true, out var format, out var formatErr)
@@ -143,11 +232,38 @@ public static class TransferPackageParser
             return TransferParseResult.Fail(ValidationCodes.InvalidFormat, fvErr);
         }
 
-        if (formatVersion != KeySenderConst.TransferFormatVersion)
+        var supportsCategories = formatVersion == KeySenderConst.TransferFormatVersion;
+        if (!supportsCategories && formatVersion != KeySenderConst.TransferFormatVersionWithoutCategories)
         {
             return TransferParseResult.Fail(
                 ValidationCodes.UnsupportedFormatVersion,
-                $"Unsupported formatVersion {formatVersion}; expected {KeySenderConst.TransferFormatVersion}. v1 is not migrated.");
+                $"Unsupported formatVersion {formatVersion}; expected {KeySenderConst.TransferFormatVersionWithoutCategories} or {KeySenderConst.TransferFormatVersion}.");
+        }
+
+        if (!ValidateObjectFields(root, supportsCategories ? CategorizedRootFields : RootFields, out var fieldError))
+        {
+            return TransferParseResult.Fail(ValidationCodes.InvalidFormat, fieldError);
+        }
+
+        IReadOnlyList<TransferCategory> categories = [];
+        if (supportsCategories)
+        {
+            if (!root.TryGetProperty("categories", out var categoriesEl) || categoriesEl.ValueKind != JsonValueKind.Array)
+            {
+                return TransferParseResult.Fail(ValidationCodes.InvalidFormat, "categories must be an array.");
+            }
+
+            if (categoriesEl.GetArrayLength() > KeySenderConst.TransferMaxNodes)
+            {
+                return TransferParseResult.Fail(
+                    ValidationCodes.ImportLimitExceeded,
+                    $"categories length must be at most {KeySenderConst.TransferMaxNodes}.");
+            }
+
+            if (!TryParseCategories(categoriesEl, out categories, out var categoryError))
+            {
+                return TransferParseResult.Fail(ValidationCodes.InvalidFormat, categoryError);
+            }
         }
 
         if (!root.TryGetProperty("nodes", out var nodesEl) || nodesEl.ValueKind != JsonValueKind.Array)
@@ -163,15 +279,35 @@ public static class TransferPackageParser
         }
 
         var writes = new List<NodeWrite>(nodesEl.GetArrayLength());
+        var categoryIndices = new List<int?>(nodesEl.GetArrayLength());
         var analyses = new List<SequenceAnalysisResult>(nodesEl.GetArrayLength());
         var anyHardError = false;
+        var nodeFields = supportsCategories ? CategorizedNodeFields : NodeFields;
 
         var index = 0;
         foreach (var nodeEl in nodesEl.EnumerateArray())
         {
-            if (!TryParseNode(nodeEl, index, out var write, out var parseError))
+            if (!TryParseNode(nodeEl, index, nodeFields, out var write, out var parseError))
             {
                 return TransferParseResult.Fail(ValidationCodes.InvalidFormat, parseError);
+            }
+
+            int? categoryIndex = null;
+            if (nodeEl.TryGetProperty("categoryIndex", out _))
+            {
+                if (!TryGetInt32Strict(nodeEl, "categoryIndex", required: true, out var value, out parseError))
+                {
+                    return TransferParseResult.Fail(ValidationCodes.InvalidFormat, parseError);
+                }
+
+                if (value >= categories.Count)
+                {
+                    return TransferParseResult.Fail(
+                        ValidationCodes.InvalidFormat,
+                        $"nodes[{index}].categoryIndex references a missing category.");
+                }
+
+                categoryIndex = value;
             }
 
             // Import events get fresh ids (design 05 §2).
@@ -182,6 +318,7 @@ public static class TransferPackageParser
 
             var analysis = SequenceAnalyzer.AnalyzeSequence(write);
             writes.Add(write);
+            categoryIndices.Add(categoryIndex);
             analyses.Add(analysis);
             if (!analysis.IsValid)
             {
@@ -198,6 +335,8 @@ public static class TransferPackageParser
         {
             Ok = true,
             Nodes = writes,
+            Categories = categories,
+            CategoryIndices = categoryIndices,
             Analyses = analyses,
             CanImport = canImport,
             WarningFingerprint = fingerprint,
@@ -207,7 +346,63 @@ public static class TransferPackageParser
         };
     }
 
-    private static bool TryParseNode(JsonElement nodeEl, int index, out NodeWrite write, out string? error)
+    private static bool TryParseCategories(
+        JsonElement categoriesEl,
+        out IReadOnlyList<TransferCategory> categories,
+        out string? error)
+    {
+        var parsed = new List<TransferCategory>(categoriesEl.GetArrayLength());
+        categories = parsed;
+        error = null;
+
+        foreach (var categoryEl in categoriesEl.EnumerateArray())
+        {
+            if (categoryEl.ValueKind != JsonValueKind.Object)
+            {
+                error = $"categories[{parsed.Count}] must be an object.";
+                return false;
+            }
+
+            if (!ValidateObjectFields(categoryEl, CategoryFields, out error)
+                || !TryGetString(categoryEl, "name", required: true, out var name, out error)
+                || !TryGetString(categoryEl, "description", required: false, out var description, out error))
+            {
+                return false;
+            }
+
+            if (GetCategoryError(name, description) is { } categoryError)
+            {
+                error = $"categories[{parsed.Count}]: {categoryError}";
+                return false;
+            }
+
+            parsed.Add(new TransferCategory(name.Trim(), description.Trim()));
+        }
+
+        return true;
+    }
+
+    private static string? GetCategoryError(string name, string description)
+    {
+        if (name.Trim().Length is < KeySenderConst.NameMinLength or > KeySenderConst.NameMaxLength || name.Contains('\0'))
+        {
+            return "Invalid category name.";
+        }
+
+        if (description.Trim().Length > KeySenderConst.DescriptionMaxLength || description.Contains('\0'))
+        {
+            return "Invalid category description.";
+        }
+
+        return null;
+    }
+
+    private static bool TryParseNode(
+        JsonElement nodeEl,
+        int index,
+        HashSet<string> nodeFields,
+        out NodeWrite write,
+        out string? error)
     {
         write = new NodeWrite();
         error = null;
@@ -218,7 +413,7 @@ public static class TransferPackageParser
             return false;
         }
 
-        if (!ValidateObjectFields(nodeEl, NodeFields, out error))
+        if (!ValidateObjectFields(nodeEl, nodeFields, out error))
         {
             return false;
         }
@@ -352,11 +547,16 @@ public static class TransferPackageParser
         return true;
     }
 
-    private static void WriteNode(Utf8JsonWriter writer, NodeWrite node)
+    private static void WriteNode(Utf8JsonWriter writer, NodeWrite node, int? categoryIndex)
     {
         writer.WriteStartObject();
         writer.WriteString("name", node.Name ?? "");
         writer.WriteString("description", node.Description ?? "");
+        if (categoryIndex is { } index)
+        {
+            writer.WriteNumber("categoryIndex", index);
+        }
+
         writer.WriteNumber("beforeDelayMs", node.BeforeDelayMs);
         writer.WriteNumber("afterDelayMs", node.AfterDelayMs);
         writer.WritePropertyName("sequence");

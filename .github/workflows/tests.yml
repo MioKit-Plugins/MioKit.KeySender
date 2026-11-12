@@ -1,0 +1,43 @@
+name: Tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  logic:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet test tests/MioKit.KeySender.Tests.csproj --configuration Release --nologo
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: plugin/vue-ui/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: plugin/vue-ui/pnpm-lock.yaml
+      - run: pnpm --dir plugin/vue-ui install --frozen-lockfile
+      - run: node --test tests/*.test.mjs
+      - run: pnpm --dir plugin/vue-ui build
+      - run: pnpm --dir plugin/vue-ui exec playwright install --with-deps chromium
+      - run: pnpm --dir plugin/vue-ui test:ui
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ui-test-results
+          path: plugin/vue-ui/test-results/
+          if-no-files-found: ignore

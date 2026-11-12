@@ -49,7 +49,6 @@ function issueMap(issues) {
   return map;
 }
 const warningByIndex = computed(() => issueMap(store.draftWarnings));
-const errorByIndex = computed(() => issueMap(store.draftErrors));
 
 function updateAt(index, partial) {
   const next = events.value.slice();
@@ -184,7 +183,6 @@ onBeforeUnmount(finishDrag);
             :event="events[row.index]"
             :read-only="readOnly"
             :warning-text="warningByIndex.get(row.index) || ''"
-            :error-text="errorByIndex.get(row.index) || ''"
             @update="(partial) => updateAt(row.index, partial)"
             @duplicate="duplicate(row.index)"
             @remove="removeAt(row.index)"

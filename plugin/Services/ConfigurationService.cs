@@ -105,7 +105,7 @@ public sealed class ConfigurationService : IConfigurationService
                 };
             }
 
-            return ConfigurationResult.Success(id, ConfigHelpers.ToDetail(id, write, isBuiltIn: false));
+            return UserNodeDetail(node, write);
         }
         finally
         {
@@ -173,7 +173,7 @@ public sealed class ConfigurationService : IConfigurationService
             }
 
             PublishCommittedValues(live, write);
-            return ConfigurationResult.Success(live.Id, ConfigHelpers.ToDetail(live.Id, write, isBuiltIn: false));
+            return UserNodeDetail(live, write);
         }
         finally
         {
@@ -200,13 +200,33 @@ public sealed class ConfigurationService : IConfigurationService
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            builtin = ConfigHelpers.RejectIfAnyBuiltIn(nodeIds);
+            var ids = nodeIds.Distinct(StringComparer.Ordinal).ToArray();
+            builtin = ConfigHelpers.RejectIfAnyBuiltIn(ids);
             if (builtin is not null)
             {
                 return builtin;
             }
 
-            var ids = nodeIds.Distinct(StringComparer.Ordinal).ToArray();
+            // The host deletes by global ID and cascades to descendants. Validate the entire
+            // batch against this plugin's live tree before passing any ID to the provider.
+            foreach (var id in ids)
+            {
+                var node = await ResolveLiveUserNodeAsync(id, cancellationToken).ConfigureAwait(false);
+                if (node is null || node.MioType != KeySenderConst.KeySenderNodeTypeGuid)
+                {
+                    return ConfigurationResult.Fail(ValidationCodes.NodeNotFound, $"Node not found: {id}", nodeId: id);
+                }
+
+                if (node.Children.Count > 0)
+                {
+                    return ConfigurationResult.Fail(
+                        ValidationCodes.InvalidConfiguration,
+                        $"Node has unexpected children and cannot be deleted: {id}",
+                        nodeId: id);
+                }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 await _data.DeleteManyAsync(ids).ConfigureAwait(false);
@@ -323,7 +343,7 @@ public sealed class ConfigurationService : IConfigurationService
                     nodeId: node.Id);
             }
 
-            return ConfigurationResult.Success(node.Id, ConfigHelpers.ToDetail(node.Id, write, isBuiltIn: false));
+            return UserNodeDetail(node, write);
         }
         finally
         {
@@ -449,10 +469,24 @@ public sealed class ConfigurationService : IConfigurationService
         }
     }
 
-    public async Task<ConfigurationResult> CreateCategoryAsync(
+    public Task<ConfigurationResult> CreateCategoryAsync(
         string name,
         string? description = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        CreateOrReuseCategoryAsync(name, description, allowReuse: false, cancellationToken);
+
+    public Task<ConfigurationResult> ResolveImportCategoryAsync(
+        string name,
+        string description,
+        bool allowReuse,
+        CancellationToken cancellationToken = default) =>
+        CreateOrReuseCategoryAsync(name, description, allowReuse, cancellationToken);
+
+    private async Task<ConfigurationResult> CreateOrReuseCategoryAsync(
+        string name,
+        string? description,
+        bool allowReuse,
+        CancellationToken cancellationToken)
     {
         var normalizedName = (name ?? string.Empty).Trim();
         if (normalizedName.Length is < KeySenderConst.NameMinLength or > KeySenderConst.NameMaxLength)
@@ -470,6 +504,19 @@ public sealed class ConfigurationService : IConfigurationService
         try
         {
             var group = RequireSearchGroup();
+            if (allowReuse)
+            {
+                var matches = group.Children.OfType<KeySenderCategory>()
+                    .Where(category => string.Equals(
+                        category.GetName()?.Trim(), normalizedName, StringComparison.OrdinalIgnoreCase))
+                    .Take(2)
+                    .ToArray();
+                if (matches.Length == 1)
+                {
+                    return ConfigurationResult.Success(matches[0].Id);
+                }
+            }
+
             var id = Guid.NewGuid().ToString("D").ToUpperInvariant();
             var category = new KeySenderCategory(id);
             category.SetName(normalizedName);
@@ -488,6 +535,14 @@ public sealed class ConfigurationService : IConfigurationService
                             },
                         })
                     .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                return ConfigurationResult.Fail(ValidationCodes.PersistenceFailed, ex.Message);
+            }
+
+            try
+            {
                 await _data.UpdateParentsAsync(
                         new Dictionary<string, string?> { [id] = group.Id })
                     .ConfigureAwait(false);
@@ -495,10 +550,17 @@ public sealed class ConfigurationService : IConfigurationService
             }
             catch (Exception ex)
             {
-                return ConfigurationResult.Fail(ValidationCodes.PersistenceFailed, ex.Message);
+                return new ConfigurationResult
+                {
+                    Code = ValidationCodes.PersistenceFailed,
+                    Message = ex.Message,
+                    NodeId = id,
+                    CreatedIds = [id],
+                    Persisted = true,
+                };
             }
 
-            return ConfigurationResult.Success(id);
+            return ConfigurationResult.Success(id, persisted: true);
         }
         finally
         {
@@ -589,7 +651,9 @@ public sealed class ConfigurationService : IConfigurationService
         try
         {
             var category = FindCategory(categoryId.Trim());
-            if (category is null)
+            if (category is null
+                || category.MioType != KeySenderConst.CategoryTypeGuid
+                || category.Parent is not KeySenderSearchGroup { Id: KeySenderConst.SearchGroupId })
             {
                 return ConfigurationResult.Fail(
                     ValidationCodes.CategoryNotFound,
@@ -597,11 +661,22 @@ public sealed class ConfigurationService : IConfigurationService
                     nodeId: categoryId);
             }
 
-            var childIds = category.GetDescendants<KeySenderNode>()
-                .Where(static n => !BuiltInKeyCatalog.IsBuiltIn(n.Id))
-                .Select(static n => n.Id)
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
+            // Deleting the category would cascade to every child, including IDs omitted from
+            // DeleteManyAsync, so the entire subtree must contain only ordinary sequence nodes.
+            var children = category.Children.ToArray();
+            if (children.Any(static child => child is not KeySenderNode
+                    || child.MioType != KeySenderConst.KeySenderNodeTypeGuid
+                    || child.Children.Count > 0
+                    || BuiltInKeyCatalog.IsBuiltIn(child.Id)))
+            {
+                return ConfigurationResult.Fail(
+                    ValidationCodes.InvalidCategory,
+                    $"Category has unexpected children and cannot be deleted: {category.Id}",
+                    nodeId: category.Id);
+            }
+
+            var childIds = children.Select(static child => child.Id).ToArray();
+            cancellationToken.ThrowIfCancellationRequested();
 
             try
             {
@@ -930,6 +1005,15 @@ public sealed class ConfigurationService : IConfigurationService
         {
             write.Sequence.Version = KeySenderConst.SequenceVersion;
         }
+    }
+
+    private static ConfigurationResult UserNodeDetail(KeySenderNode node, NodeWrite write)
+    {
+        var category = node.Parent is KeySenderCategory parent
+            ? new CategorySnapshot(parent.Id, parent.GetName() ?? string.Empty, parent.GetDescription() ?? string.Empty)
+            : null;
+        var detail = ConfigHelpers.ToDetail(node.Id, write, isBuiltIn: false, category);
+        return ConfigurationResult.Success(node.Id, detail, category);
     }
 
     private static void PublishCommittedValues(KeySenderNode node, NodeWrite write)

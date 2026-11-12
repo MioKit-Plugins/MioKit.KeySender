@@ -57,6 +57,12 @@
 export const BUILTIN_COPY_ID = 'E32C3712-9407-4A41-8DD8-134810F5F93D';
 export const BUILTIN_CUT_ID = '00C1CF3E-39C4-464F-8D37-A80C47B414F3';
 export const BUILTIN_PASTE_ID = 'C13771F3-65A4-4F0B-A2B9-11798D8AFA24';
+export const MAX_DELAY_MS = 2147483647;
+
+export function delayErrorMessage(delay, fieldName) {
+  if (Number.isInteger(delay) && delay >= 0 && delay <= MAX_DELAY_MS) return null;
+  return `${fieldName}必须是 0～${MAX_DELAY_MS} 毫秒之间的整数`;
+}
 
 export const EVENT_TYPE_LABELS = {
   keyDown: '按下',

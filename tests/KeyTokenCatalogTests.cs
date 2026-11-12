@@ -41,6 +41,32 @@ public sealed class KeyTokenCatalogTests
         Assert.Equal(enter.VirtualKey, numpad.VirtualKey);
     }
 
+    [Theory]
+    [InlineData(0x10, 0x2A, false, "LeftShift")]
+    [InlineData(0x10, 0x36, false, "RightShift")]
+    [InlineData(0x11, 0x1D, false, "LeftControl")]
+    [InlineData(0x11, 0x1D, true, "RightControl")]
+    [InlineData(0x12, 0x38, false, "LeftAlt")]
+    [InlineData(0x12, 0x38, true, "RightAlt")]
+    [InlineData(0x0D, 0x1C, false, "Enter")]
+    [InlineData(0x0D, 0x1C, true, "NumpadEnter")]
+    [InlineData(0xBF, 0x35, false, "Slash")]
+    [InlineData(0x6F, 0x35, true, "NumpadDivide")]
+    [InlineData(0x23, 0x4F, false, "Numpad1")]
+    [InlineData(0x23, 0x4F, true, "End")]
+    [InlineData(0x2E, 0x53, false, "NumpadDecimal")]
+    [InlineData(0x2E, 0x53, true, "Delete")]
+    [InlineData(0x90, 0x45, true, "NumLock")]
+    [InlineData(0x13, 0x45, false, "Pause")]
+    [InlineData(0x2C, 0x37, true, "PrintScreen")]
+    [InlineData(0x6A, 0x37, false, "NumpadMultiply")]
+    [InlineData(0xAD, 0, false, "VolumeMute")]
+    public void Raw_hook_events_resolve_physical_key_variants(int vk, int scan, bool extended, string token)
+    {
+        Assert.True(KeyTokenCatalog.TryResolve((ushort)vk, (ushort)scan, extended, out var info));
+        Assert.Equal(token, info.Token);
+    }
+
     [Fact]
     public void Unknown_and_wrong_case_tokens_are_rejected()
     {

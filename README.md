@@ -34,7 +34,7 @@
 |---|---|
 | 顶部 | 搜索、新建、导入、导出、批量删除 |
 | 左侧 | 「全部」「系统内置」以及用户自建分类；可新建 / 重命名 / 删除（无系统默认分类） |
-| 中间 | 节点列表：名称、描述、热键显示、内置标记 |
+| 中间 | 节点列表：名称、描述、内置标记、操作 |
 | 右侧 Sheet | **录制** / **详细** 两个标签编辑当前节点 |
 
 其它交互：
@@ -46,7 +46,7 @@
 - 编辑器中的复制也遵循未保存确认；关闭或切换节点后，旧加载、保存和录制结果不会覆盖新草稿。
 - 只有 Down、只有 Up、重复 Down 都可以直接保存；按键配对由使用者配置，不需要二次确认。
 
-触发热键、别名、固定仍在 **宿主入口设置** 中配置；管理页热键列仅作显示。
+在 **宿主入口设置** 中配置触发热键、别名和固定。
 
 ---
 
@@ -73,9 +73,10 @@
 
 ## 导入 / 导出
 
-- 导出已保存的节点定义（名称、描述、等待、事件顺序）。热键、别名、固定等本机入口偏好仍留在本机。
-- 导入先预览事件数、等待合计和校验结果；未配对事件不阻止创建副本。
-- 当前文件对话框使用 `*.json`；格式标识为 `miokit.key-sender`，版本 `2`。
+- 导出所选节点的已保存定义，以及关联分类的名称、说明和节点归属。热键、别名和固定等入口偏好留在本机。
+- 每份文件最多 500 个节点、5 MiB。超过任一限制时请分批导出，原有文件会保留。
+- 导入预览显示分类、事件数、等待合计和校验结果。文件和本机各有一个同名分类时复用本机分类，保留本机说明。遇到多个同名分类时，按文件分组新建分类。
+- 文件对话框使用 `*.json`。`miokit.key-sender` 文件含分类时使用 v3，无分类时使用 v2。旧 v2 文件可导入为未分类节点。
 
 ---
 
@@ -90,6 +91,17 @@
 
 ## 开发验证
 
-后端回归：`dotnet test tests/MioKit.KeySender.Tests.csproj`。
-前端状态回归：`node tests/manager-store.test.mjs`。
-前端发布构建：在 `plugin/vue-ui` 中执行 `pnpm build`。
+在仓库根目录执行。C# 测试需要 Windows 和 .NET 10；前端建议使用 Node.js 22。
+
+```powershell
+dotnet test tests/MioKit.KeySender.Tests.csproj --configuration Release
+node --test tests/manager-store.test.mjs tests/key-sender-bridge.test.mjs
+pnpm --dir plugin/vue-ui install --frozen-lockfile
+pnpm --dir plugin/vue-ui exec playwright install chromium
+pnpm --dir plugin/vue-ui test:ui
+pnpm --dir plugin/vue-ui build
+```
+
+Linux 首次安装浏览器时可使用 `playwright install --with-deps chromium` 安装系统依赖。Playwright 会启动独立的 Vite 服务，并在 Chromium 里操作实际 Vue 页面；数据、录制与文件对话框由浏览器 Mock 提供。C# 测试使用替身验证执行、录制、存储及桥接服务，无需向桌面注入按键。
+
+[测试工作流](.github/workflows/tests.yml) 在推送分支和提交 PR 时运行。宿主真机检查和已知问题见[代码审查与测试覆盖](docs/07-代码审查与测试覆盖.md)。

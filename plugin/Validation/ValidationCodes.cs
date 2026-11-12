@@ -56,7 +56,9 @@ public static class ValidationCodes
     public const string UnsupportedFormatVersion = "unsupported_format_version";
     public const string FileTooLarge = "file_too_large";
     public const string ImportLimitExceeded = "import_limit_exceeded";
+    public const string ExportLimitExceeded = "export_limit_exceeded";
     public const string ImportPreviewExpired = "import_preview_expired";
+    public const string ImportInProgress = "import_in_progress";
     public const string ImportChanged = "import_changed";
     public const string ImportInvalid = "import_invalid";
     public const string FileAccessFailed = "file_access_failed";

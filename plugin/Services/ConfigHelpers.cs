@@ -87,12 +87,15 @@ public static class ConfigHelpers
         return baseName + suffix;
     }
 
-    public static NodeDetail ToDetail(string nodeId, NodeWrite write, bool isBuiltIn)
+    public static NodeDetail ToDetail(
+        string nodeId, NodeWrite write, bool isBuiltIn, CategorySnapshot? category = null)
         => new()
         {
             NodeId = nodeId,
             Name = write.Name,
             Description = write.Description,
+            CategoryId = category?.Id,
+            CategoryName = category?.Name,
             BeforeDelayMs = write.BeforeDelayMs,
             AfterDelayMs = write.AfterDelayMs,
             Sequence = write.Sequence,

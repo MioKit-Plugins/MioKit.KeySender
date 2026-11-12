@@ -8,13 +8,25 @@ import {
   isKeySenderMock,
   withSession,
 } from '@/api/key-sender.js';
-import { emptyDraft, newEventId, toNodeWrite } from '@/api/types.js';
+import { delayErrorMessage, emptyDraft, newEventId, toNodeWrite } from '@/api/types.js';
 
 const validationTimers = new WeakMap();
 
 function draftFingerprint(draft) {
   if (!draft) return '';
   return JSON.stringify(toNodeWrite(draft));
+}
+
+function draftDelayError(detail) {
+  const nodeError = delayErrorMessage(detail.beforeDelayMs, '节点前等待')
+    ?? delayErrorMessage(detail.afterDelayMs, '节点后等待');
+  if (nodeError) return nodeError;
+
+  for (const [index, event] of detail.sequence.events.entries()) {
+    const error = delayErrorMessage(event.delayBeforeMs, `第 ${index + 1} 条事件的等待`);
+    if (error) return error;
+  }
+  return null;
 }
 
 /** Normalize Initialize / GetCategories payloads into unique CategoryListItem[]. */
@@ -82,7 +94,6 @@ export const useManagerStore = defineStore('keySenderManager', {
     draftGeneration: 0,
     draftValidationSequence: 0,
     draftWarnings: [],
-    draftErrors: [],
     saving: false,
 
     runs: {
@@ -442,7 +453,6 @@ export const useManagerStore = defineStore('keySenderManager', {
       this.draft = null;
       this.draftBaseline = '';
       this.draftWarnings = [];
-      this.draftErrors = [];
       if (!nodeId) {
         this.draftLoading = false;
         return;
@@ -459,8 +469,6 @@ export const useManagerStore = defineStore('keySenderManager', {
         }
         this.draft = { ...res.data };
         this.draftBaseline = draftFingerprint(this.draft);
-        this.draftWarnings = [];
-        this.draftErrors = [];
         this.scheduleDraftValidation();
       } catch (error) {
         if (generation === this.draftGeneration) {
@@ -495,7 +503,6 @@ export const useManagerStore = defineStore('keySenderManager', {
       this.draft = emptyDraft({ name: '新节点' });
       this.draftBaseline = draftFingerprint(emptyDraft({ name: '__unset__' }));
       this.draftWarnings = [];
-      this.draftErrors = [];
       this.markDirtyBaselineEmpty();
     },
 
@@ -537,7 +544,6 @@ export const useManagerStore = defineStore('keySenderManager', {
       this.cancelDraftValidation();
       if (!this.draft) {
         this.draftWarnings = [];
-        this.draftErrors = [];
         return null;
       }
       const draft = this.draft;
@@ -548,7 +554,6 @@ export const useManagerStore = defineStore('keySenderManager', {
       }));
       if (sequence !== this.draftValidationSequence || draft !== this.draft) return null;
       if (!res.ok) return null;
-      this.draftErrors = res.data.errors ?? [];
       this.draftWarnings = res.data.warnings ?? [];
       return res.data;
     },
@@ -560,17 +565,22 @@ export const useManagerStore = defineStore('keySenderManager', {
         toast.message('内置节点只读');
         return false;
       }
-      const api = getKeySenderApi();
       const draft = this.draft;
       const generation = this.draftGeneration;
       const detail = toNodeWrite(draft);
+      // Check number fields before sending them to the bridge's Int32 parameters.
+      const delayError = draftDelayError(detail);
+      if (delayError) {
+        toast.error('保存失败', { description: delayError });
+        return false;
+      }
+      const api = getKeySenderApi();
       const submittedFingerprint = draftFingerprint(detail);
       const nodeId = draft.nodeId;
       const categoryId = this.effectiveCreateCategoryId;
       const leaveAction = continueAfter ? this.dirtyLeaveAction : null;
       const isCurrentEditor = () => this.draft === draft && this.draftGeneration === generation;
-      // Create/Update perform authoritative validation. Background validation is editor feedback
-      // and must never cancel a save just because its response has been superseded.
+      // Create/Update validate the submitted draft. Background analysis supplies row warnings.
       this.cancelDraftValidation();
       this.saving = true;
       try {
@@ -589,10 +599,10 @@ export const useManagerStore = defineStore('keySenderManager', {
 
         if (!res.ok) {
           if (isCurrentEditor() && draftFingerprint(draft) === submittedFingerprint && res.error?.details) {
-            this.draftErrors = res.error.details.errors ?? [];
             this.draftWarnings = res.error.details.warnings ?? [];
           }
-          toast.error('保存失败', { description: res.error?.message });
+          const issue = res.error?.details?.errors?.find((error) => error.message);
+          toast.error('保存失败', { description: issue?.message ?? res.error?.message });
           return false;
         }
 
@@ -612,7 +622,6 @@ export const useManagerStore = defineStore('keySenderManager', {
           this.draftBaseline = draftFingerprint(persisted);
           if (!this.isDirty) {
             this.cancelDraftValidation();
-            this.draftErrors = [];
             this.draftWarnings = [];
           }
         }
@@ -669,7 +678,6 @@ export const useManagerStore = defineStore('keySenderManager', {
       this.draft = null;
       this.draftBaseline = '';
       this.draftWarnings = [];
-      this.draftErrors = [];
       this.selectedNodeId = null;
       this.recording = null;
       this.recordingFragment = null;
@@ -903,12 +911,14 @@ export const useManagerStore = defineStore('keySenderManager', {
         previewId: this.importPreview.previewId,
       }));
       if (!res.ok) {
-        toast.error('导入失败', { description: res.error?.message });
-        return;
+        const persisted = res.error?.details?.persisted;
+        toast.error(persisted ? '导入未完成，已保存部分内容' : '导入失败', { description: res.error?.message });
+        if (!persisted) return;
+      } else {
+        toast.success(`已导入 ${res.data.createdItems?.length ?? 0} 个节点`);
       }
       this.dialogs.importPreview = false;
       this.importPreview = null;
-      toast.success(`已导入 ${res.data.createdItems?.length ?? 0} 个节点`);
       await this.refreshCategories();
       await this.refreshList();
     },

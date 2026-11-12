@@ -11,6 +11,10 @@ public sealed class NodeDetail
 
     public required string Description { get; init; }
 
+    public string? CategoryId { get; init; }
+
+    public string? CategoryName { get; init; }
+
     public int BeforeDelayMs { get; init; }
 
     public int AfterDelayMs { get; init; }

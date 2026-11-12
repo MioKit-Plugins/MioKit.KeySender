@@ -24,7 +24,8 @@ public static class KeyTokenCatalog
             // Prefer first unique (vk, extended); NumpadEnter vs Enter already differ by extended.
             ByVkExtended.TryAdd((info.VirtualKey, info.Extended), info);
 
-            if (info.Token.StartsWith("Numpad", StringComparison.Ordinal) && info.ScanCode != 0)
+            // Extended keys can share a scan code with a non-numpad key (e.g. Enter and Slash).
+            if (!info.Extended && info.ScanCode != 0 && info.Token.StartsWith("Numpad", StringComparison.Ordinal))
             {
                 NumpadByScan.TryAdd(info.ScanCode, info);
             }

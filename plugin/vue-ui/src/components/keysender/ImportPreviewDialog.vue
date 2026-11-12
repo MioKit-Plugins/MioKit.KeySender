@@ -54,6 +54,7 @@ async function onCommit() {
               <Badge v-else-if="item.warnings?.length" variant="secondary">警告</Badge>
             </div>
             <div class="text-xs text-muted-foreground">
+              <template v-if="item.categoryName">分类：{{ item.categoryName }} · </template>
               {{ item.eventCount }} 条事件 · 配置等待 {{ item.totalDelayMs }} ms
             </div>
             <div v-if="item.description" class="truncate text-xs text-muted-foreground">

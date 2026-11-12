@@ -1,5 +1,4 @@
 <script setup>
-import { computed } from 'vue';
 import { GripVertical, Copy, Trash2 } from 'lucide-vue-next';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,15 +9,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { EVENT_TYPE_LABELS } from '@/api/types.js';
+import { EVENT_TYPE_LABELS, MAX_DELAY_MS } from '@/api/types.js';
 import KeyPicker from './KeyPicker.vue';
 
-const props = defineProps({
+defineProps({
   index: { type: Number, required: true },
   event: { type: Object, required: true },
   readOnly: { type: Boolean, default: false },
   warningText: { type: String, default: '' },
-  errorText: { type: String, default: '' },
 });
 
 const emit = defineEmits([
@@ -27,11 +25,6 @@ const emit = defineEmits([
   'remove',
   'reorderstart',
 ]);
-
-const delayInvalid = computed(() => {
-  const n = Number(props.event.delayBeforeMs);
-  return !Number.isInteger(n) || n < 0 || n > 600000;
-});
 </script>
 
 <template>
@@ -78,10 +71,9 @@ const delayInvalid = computed(() => {
         class="h-8 pr-8 tabular-nums"
         type="number"
         min="0"
-        max="600000"
+        :max="MAX_DELAY_MS"
         step="1"
         :disabled="readOnly"
-        :aria-invalid="delayInvalid"
         :model-value="event.delayBeforeMs"
         @update:model-value="(v) => emit('update', { delayBeforeMs: Number(v) })"
       />
@@ -99,10 +91,11 @@ const delayInvalid = computed(() => {
       </Button>
     </div>
 
-    <div class="col-span-full min-h-4 truncate px-1 text-[11px] leading-4" :title="errorText || warningText">
-      <span v-if="errorText" class="text-destructive">{{ errorText }}</span>
-      <span v-else-if="warningText" class="text-warning-foreground/90 dark:text-warning">{{ warningText }}</span>
-      <span v-else class="invisible">占位</span>
+    <div
+      class="col-span-full h-4 truncate px-1 text-[11px] leading-4 text-warning-foreground/90 dark:text-warning"
+      :title="warningText"
+    >
+      {{ warningText }}
     </div>
   </div>
 </template>

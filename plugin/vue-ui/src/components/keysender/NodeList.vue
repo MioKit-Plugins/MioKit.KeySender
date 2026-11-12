@@ -174,7 +174,6 @@ function onRowDragStart(node, event) {
                 />
               </TableHead>
               <TableHead class="h-11 min-w-[16rem] px-2">节点</TableHead>
-              <TableHead class="h-11 w-40 px-3">热键</TableHead>
               <TableHead class="h-11 w-28 px-3">标记</TableHead>
               <TableHead class="h-11 w-36 px-4 text-right">操作</TableHead>
             </TableRow>
@@ -211,15 +210,6 @@ function onRowDragStart(node, event) {
                     </p>
                   </div>
                 </div>
-              </TableCell>
-              <TableCell class="px-3 py-3.5">
-                <span
-                  v-if="node.hotkeyDisplay"
-                  class="inline-flex max-w-full truncate rounded-md bg-muted/60 px-2 py-1 font-mono text-[11px] text-muted-foreground ring-1 ring-border/60"
-                >
-                  {{ node.hotkeyDisplay }}
-                </span>
-                <span v-else class="text-xs text-muted-foreground">—</span>
               </TableCell>
               <TableCell class="px-3 py-3.5">
                 <span

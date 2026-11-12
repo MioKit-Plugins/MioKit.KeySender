@@ -23,8 +23,8 @@ public static class SequenceAnalyzer
 
         ValidateName(write.Name, hardErrors);
         ValidateDescription(write.Description, hardErrors);
-        ValidateDelay(write.BeforeDelayMs, "beforeDelayMs", hardErrors);
-        ValidateDelay(write.AfterDelayMs, "afterDelayMs", hardErrors);
+        ValidateDelay(write.BeforeDelayMs, "beforeDelayMs", "节点前等待", hardErrors);
+        ValidateDelay(write.AfterDelayMs, "afterDelayMs", "节点后等待", hardErrors);
 
         var sequence = write.Sequence ?? new KeyboardSequence();
         var events = sequence.Events ?? [];
@@ -35,7 +35,7 @@ public static class SequenceAnalyzer
             {
                 Code = ValidationCodes.UnsupportedSequenceVersion,
                 FieldPath = "sequence.version",
-                Message = $"Unsupported sequence version {sequence.Version}; expected {KeySenderConst.SequenceVersion}.",
+                Message = $"序列版本 {sequence.Version} 不受支持，请使用版本 {KeySenderConst.SequenceVersion}",
             });
         }
 
@@ -48,8 +48,8 @@ public static class SequenceAnalyzer
                     : ValidationCodes.EventCountOutOfRange,
                 FieldPath = "sequence.events",
                 Message = events.Count == 0
-                    ? "Sequence must contain at least one event."
-                    : $"Event count {events.Count} is outside {KeySenderConst.EventCountMin}–{KeySenderConst.EventCountMax}.",
+                    ? "请至少添加一个按键事件"
+                    : $"按键事件数量必须在 {KeySenderConst.EventCountMin}–{KeySenderConst.EventCountMax} 条之间",
             });
         }
 
@@ -67,7 +67,7 @@ public static class SequenceAnalyzer
             {
                 Code = ValidationCodes.UnsupportedKeyCombination,
                 FieldPath = "sequence.events",
-                Message = "Ctrl+Alt+Delete combination is not supported (including keys already held).",
+                Message = "不支持 Ctrl+Alt+Delete 组合键（包括已按住的键）",
             });
         }
 
@@ -76,7 +76,7 @@ public static class SequenceAnalyzer
             var ev = events[i] ?? new KeyboardEvent();
             var path = $"sequence.events[{i.ToString(CultureInfo.InvariantCulture)}]";
 
-            ValidateDelay(ev.DelayBeforeMs, $"{path}.delayBeforeMs", hardErrors);
+            ValidateDelay(ev.DelayBeforeMs, $"{path}.delayBeforeMs", "等待", hardErrors, eventNumber: i + 1);
             delayTotal = checkedAdd(delayTotal, ev.DelayBeforeMs, hardErrors);
 
             if (string.IsNullOrEmpty(ev.EventId))
@@ -86,7 +86,7 @@ public static class SequenceAnalyzer
                     Code = ValidationCodes.InvalidConfiguration,
                     FieldPath = $"{path}.eventId",
                     EventIndex = i,
-                    Message = "eventId is required.",
+                    Message = $"第 {i + 1} 条事件缺少标识",
                 });
             }
             else if (!seenIds.Add(ev.EventId))
@@ -96,7 +96,7 @@ public static class SequenceAnalyzer
                     Code = ValidationCodes.DuplicateEventId,
                     FieldPath = $"{path}.eventId",
                     EventIndex = i,
-                    Message = $"Duplicate eventId '{ev.EventId}'.",
+                    Message = $"第 {i + 1} 条事件的标识重复",
                 });
             }
 
@@ -108,7 +108,7 @@ public static class SequenceAnalyzer
                     Code = ValidationCodes.UnknownEventType,
                     FieldPath = $"{path}.type",
                     EventIndex = i,
-                    Message = $"Unknown event type '{ev.Type}'.",
+                    Message = $"第 {i + 1} 条事件的类型无效",
                 });
             }
 
@@ -121,7 +121,7 @@ public static class SequenceAnalyzer
                     FieldPath = $"{path}.key",
                     Key = ev.Key,
                     EventIndex = i,
-                    Message = $"Unknown key token '{ev.Key}'.",
+                    Message = $"第 {i + 1} 条事件的按键无效",
                 });
             }
 
@@ -174,7 +174,7 @@ public static class SequenceAnalyzer
                     Code = ValidationCodes.UnsupportedKeyCombination,
                     FieldPath = path,
                     EventIndex = i,
-                    Message = "Ctrl+Alt+Delete combination is not supported.",
+                    Message = "不支持 Ctrl+Alt+Delete 组合键",
                 });
             }
         }
@@ -353,27 +353,21 @@ public static class SequenceAnalyzer
 
     private static void ValidateName(string? name, List<ValidationIssue> hardErrors)
     {
-        if (name is null || name.IndexOf('\0') >= 0)
+        var message = name?.Contains('\0') == true
+            ? "名称含有无效字符"
+            : (name?.Trim().Length ?? 0) switch
+            {
+                < KeySenderConst.NameMinLength => "名称不能为空",
+                > KeySenderConst.NameMaxLength => $"名称不能超过 {KeySenderConst.NameMaxLength} 个字符",
+                _ => null,
+            };
+        if (message is not null)
         {
             hardErrors.Add(new ValidationIssue
             {
                 Code = ValidationCodes.InvalidName,
                 FieldPath = "name",
-                Message = "Name must not be null or contain NUL.",
-            });
-            return;
-        }
-
-        var trimmed = name.Trim();
-        if (trimmed.Length < KeySenderConst.NameMinLength
-            || trimmed.Length > KeySenderConst.NameMaxLength)
-        {
-            hardErrors.Add(new ValidationIssue
-            {
-                Code = ValidationCodes.InvalidName,
-                FieldPath = "name",
-                Message =
-                    $"Name length after Trim must be {KeySenderConst.NameMinLength}–{KeySenderConst.NameMaxLength} UTF-16 units.",
+                Message = message,
             });
         }
     }
@@ -386,7 +380,7 @@ public static class SequenceAnalyzer
             {
                 Code = ValidationCodes.InvalidDescription,
                 FieldPath = "description",
-                Message = "Description must not be null or contain NUL.",
+                Message = description is null ? "缺少描述字段" : "描述含有无效字符",
             });
             return;
         }
@@ -397,21 +391,22 @@ public static class SequenceAnalyzer
             {
                 Code = ValidationCodes.InvalidDescription,
                 FieldPath = "description",
-                Message = $"Description length must be ≤ {KeySenderConst.DescriptionMaxLength} UTF-16 units.",
+                Message = $"描述不能超过 {KeySenderConst.DescriptionMaxLength} 个字符",
             });
         }
     }
 
-    private static void ValidateDelay(int delayMs, string fieldPath, List<ValidationIssue> hardErrors)
+    private static void ValidateDelay(
+        int delayMs, string fieldPath, string label, List<ValidationIssue> hardErrors, int? eventNumber = null)
     {
         if (delayMs < KeySenderConst.DelayMsMin || delayMs > KeySenderConst.DelayMsMax)
         {
+            var fieldLabel = eventNumber is int number ? $"第 {number} 条事件的{label}" : label;
             hardErrors.Add(new ValidationIssue
             {
                 Code = ValidationCodes.InvalidDelay,
                 FieldPath = fieldPath,
-                Message =
-                    $"Delay {delayMs} is outside {KeySenderConst.DelayMsMin}–{KeySenderConst.DelayMsMax}.",
+                Message = $"{fieldLabel}必须在 {KeySenderConst.DelayMsMin}–{KeySenderConst.DelayMsMax} 毫秒之间",
             });
         }
     }
@@ -430,7 +425,7 @@ public static class SequenceAnalyzer
                 {
                     Code = ValidationCodes.DelayTotalOverflow,
                     FieldPath = "sequence",
-                    Message = "Checked delay total overflowed Int64.",
+                    Message = "总等待时间超过可处理范围",
                 });
             }
 

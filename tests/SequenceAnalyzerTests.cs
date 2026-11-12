@@ -143,7 +143,8 @@ public sealed class SequenceAnalyzerTests
         empty.Sequence.Events.Clear();
         Assert.Contains(
             SequenceAnalyzer.AnalyzeSequence(empty).HardErrors,
-            e => e.Code == ValidationCodes.EmptySequence);
+            e => e.Code == ValidationCodes.EmptySequence && e.FieldPath == "sequence.events"
+                && e.Message == "请至少添加一个按键事件");
 
         var unknownType = CreateWrite(new KeyboardEvent
         {
@@ -194,13 +195,13 @@ public sealed class SequenceAnalyzerTests
         badName.Name = " ";
         Assert.Contains(
             SequenceAnalyzer.AnalyzeSequence(badName).HardErrors,
-            e => e.Code == ValidationCodes.InvalidName);
+            e => e.Code == ValidationCodes.InvalidName && e.FieldPath == "name" && e.Message == "名称不能为空");
 
         var nulName = CreateWrite(Down("e1", "KeyA"));
         nulName.Name = "a\0b";
         Assert.Contains(
             SequenceAnalyzer.AnalyzeSequence(nulName).HardErrors,
-            e => e.Code == ValidationCodes.InvalidName);
+            e => e.Code == ValidationCodes.InvalidName && e.FieldPath == "name" && e.Message == "名称含有无效字符");
 
         var longDesc = CreateWrite(Down("e1", "KeyA"));
         longDesc.Description = new string('x', 501);
@@ -209,9 +210,17 @@ public sealed class SequenceAnalyzerTests
             e => e.Code == ValidationCodes.InvalidDescription);
 
         var negativeDelay = CreateWrite(Down("e1", "KeyA", -1));
-        Assert.Contains(
-            SequenceAnalyzer.AnalyzeSequence(negativeDelay).HardErrors,
-            e => e.Code == ValidationCodes.InvalidDelay);
+        negativeDelay.BeforeDelayMs = -1;
+        negativeDelay.AfterDelayMs = -1;
+        Assert.Equal(
+            [
+                ("beforeDelayMs", "节点前等待必须在 0–2147483647 毫秒之间"),
+                ("afterDelayMs", "节点后等待必须在 0–2147483647 毫秒之间"),
+                ("sequence.events[0].delayBeforeMs", "第 1 条事件的等待必须在 0–2147483647 毫秒之间"),
+            ],
+            SequenceAnalyzer.AnalyzeSequence(negativeDelay).HardErrors
+                .Where(e => e.Code == ValidationCodes.InvalidDelay)
+                .Select(e => (e.FieldPath, e.Message)));
     }
 
     [Fact]
@@ -224,6 +233,67 @@ public sealed class SequenceAnalyzerTests
             Up("e4", "LeftControl", 20));
 
         var result = SequenceAnalyzer.AnalyzeSequence(write);
+
+        Assert.True(result.IsValid);
+        Assert.Empty(result.Warnings);
+    }
+
+    [Fact]
+    public void Pairing_keeps_modifier_sides_and_numpad_enter_separate()
+    {
+        var write = CreateWrite(
+            Down("e1", "LeftControl"),
+            Down("e2", "NumpadEnter"),
+            Up("e3", "RightControl"),
+            Up("e4", "Enter"));
+
+        var result = SequenceAnalyzer.AnalyzeSequence(write);
+
+        Assert.True(result.IsValid);
+        Assert.Equal(
+            [
+                (ValidationCodes.UnmatchedKeyUp, "RightControl", (int?)2, "sequence.events[2]"),
+                (ValidationCodes.UnmatchedKeyUp, "Enter", (int?)3, "sequence.events[3]"),
+                (ValidationCodes.UnclosedKeyDown, "LeftControl", (int?)0, "sequence.events[0]"),
+                (ValidationCodes.UnclosedKeyDown, "NumpadEnter", (int?)1, "sequence.events[1]"),
+            ],
+            result.Warnings.Select(w => (w.Code, w.Key, w.EventIndex, w.FieldPath)));
+    }
+
+    [Fact]
+    public void Maximum_length_and_large_cumulative_delays_are_valid()
+    {
+        var write = CreateWrite();
+        write.Name = "  " + string.Concat(Enumerable.Repeat("😀", 50)) + "  ";
+        write.Description = new string('x', 500);
+        write.BeforeDelayMs = int.MaxValue;
+        write.AfterDelayMs = int.MaxValue;
+        write.Sequence.Events = Enumerable.Range(0, 10000)
+            .Select(i => i % 2 == 0
+                ? Down($"e{i}", "KeyA", int.MaxValue)
+                : Up($"e{i}", "KeyA", int.MaxValue))
+            .ToList();
+
+        var result = SequenceAnalyzer.AnalyzeSequence(write);
+
+        Assert.True(result.IsValid);
+        Assert.Empty(result.Warnings);
+        write.Name += "😀";
+        Assert.Contains(SequenceAnalyzer.AnalyzeSequence(write).HardErrors, issue =>
+            issue.Code == ValidationCodes.InvalidName && issue.FieldPath == "name"
+            && issue.Message == "名称不能超过 100 个字符");
+    }
+
+    [Fact]
+    public void Releasing_the_first_modifier_avoids_a_simultaneous_ctrl_alt_delete()
+    {
+        var result = SequenceAnalyzer.AnalyzeSequence(CreateWrite(
+            Down("e1", "LeftControl"),
+            Up("e2", "LeftControl"),
+            Down("e3", "RightAlt"),
+            Down("e4", "Delete"),
+            Up("e5", "Delete"),
+            Up("e6", "RightAlt")));
 
         Assert.True(result.IsValid);
         Assert.Empty(result.Warnings);

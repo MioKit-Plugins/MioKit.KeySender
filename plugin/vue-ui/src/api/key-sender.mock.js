@@ -2,11 +2,14 @@ import {
   BUILTIN_COPY_ID,
   BUILTIN_CUT_ID,
   BUILTIN_PASTE_ID,
+  delayErrorMessage,
   keyDisplay,
   newEventId,
 } from './types.js';
 
 const SESSION_ID = 'mock-window-session';
+const MAX_NAME_LENGTH = 100;
+const MAX_DESCRIPTION_LENGTH = 500;
 
 function ok(data) {
   return { ok: true, data, error: null };
@@ -63,14 +66,32 @@ function analyzeSequence(detail) {
   const warnings = [];
   const events = detail.sequence?.events ?? [];
 
-  if (!detail.name?.trim()) {
-    errors.push({ code: 'validation_failed', fieldPath: 'name', message: '名称不能为空' });
+  const name = detail.name ?? '';
+  if (name.includes('\0')) {
+    errors.push({ code: 'invalid_name', fieldPath: 'name', message: '名称含有无效字符' });
+  } else if (!name.trim()) {
+    errors.push({ code: 'invalid_name', fieldPath: 'name', message: '名称不能为空' });
+  } else if (name.trim().length > MAX_NAME_LENGTH) {
+    errors.push({ code: 'invalid_name', fieldPath: 'name', message: `名称不能超过 ${MAX_NAME_LENGTH} 个字符` });
   }
+
+  const description = detail.description ?? '';
+  if (description.includes('\0')) {
+    errors.push({ code: 'invalid_description', fieldPath: 'description', message: '描述含有无效字符' });
+  } else if (description.length > MAX_DESCRIPTION_LENGTH) {
+    errors.push({ code: 'invalid_description', fieldPath: 'description', message: `描述不能超过 ${MAX_DESCRIPTION_LENGTH} 个字符` });
+  }
+
+  for (const [fieldPath, label] of [['beforeDelayMs', '节点前等待'], ['afterDelayMs', '节点后等待']]) {
+    const message = delayErrorMessage(detail[fieldPath] ?? 0, label);
+    if (message) errors.push({ code: 'invalid_delay', fieldPath, message });
+  }
+
   if (events.length === 0) {
     errors.push({
-      code: 'validation_failed',
+      code: 'empty_sequence',
       fieldPath: 'sequence.events',
-      message: '空序列不能保存',
+      message: '请至少添加一个按键事件',
     });
   }
   if ((detail.sequence?.version ?? 2) !== 2) {
@@ -101,13 +122,13 @@ function analyzeSequence(detail) {
       });
       return;
     }
-    const delay = Number(ev.delayBeforeMs);
-    if (!Number.isInteger(delay) || delay < 0 || delay > 600000) {
+    const delayError = delayErrorMessage(Number(ev.delayBeforeMs), `第 ${index + 1} 条事件的等待`);
+    if (delayError) {
       errors.push({
-        code: 'validation_failed',
+        code: 'invalid_delay',
         fieldPath: `sequence.events[${index}].delayBeforeMs`,
         eventIndex: index,
-        message: '事件前等待必须是 0～600000 的整数',
+        message: delayError,
       });
     }
 
@@ -518,7 +539,8 @@ export function createKeySenderMock() {
           maxEvents: 10000,
           maxPageSize: 100,
           defaultPageSize: 20,
-          maxNameLength: 100,
+          maxNameLength: MAX_NAME_LENGTH,
+          maxDescriptionLength: MAX_DESCRIPTION_LENGTH,
         },
         keyCatalog: buildKeyCatalog(),
         categories: buildCategoryList().items,
@@ -886,11 +908,13 @@ export function createKeySenderMock() {
         return fail('recording_busy', '录制进行中不能导入');
       }
       const previewId = newEventId();
+      const categories = [{ name: '导入示例分类', description: '分类说明示例' }];
       const items = [
         {
           itemIndex: 0,
           name: '导入示例 · Down-only',
           description: '仅 LeftControl Down',
+          categoryName: categories[0].name,
           eventCount: 1,
           totalDelayMs: 0,
           errors: [],
@@ -930,10 +954,12 @@ export function createKeySenderMock() {
         canImport: true,
         warningFingerprint,
         items,
+        _categories: categories,
         _payloads: [
           {
             name: '导入示例 · Down-only',
             description: '仅 LeftControl Down',
+            categoryIndex: 0,
             beforeDelayMs: 0,
             afterDelayMs: 0,
             sequence: {
@@ -969,11 +995,21 @@ export function createKeySenderMock() {
       if (!preview || preview.previewId !== request.previewId) {
         return fail('import_preview_expired', '导入预览已过期');
       }
+      const createdCategoryIds = [];
+      const categories = preview._categories.map((category) => {
+        const matches = state.categories.filter((item) => item.name === category.name);
+        if (matches.length === 1) return matches[0];
+        const created = { ...category, categoryId: newEventId().toUpperCase() };
+        state.categories.push(created);
+        createdCategoryIds.push(created.categoryId);
+        return created;
+      });
       const createdItems = [];
-      for (const payload of preview._payloads) {
+      for (const { categoryIndex, ...payload } of preview._payloads) {
         const node = {
           ...payload,
           nodeId: newEventId().toUpperCase(),
+          categoryId: categories[categoryIndex]?.categoryId ?? null,
           aliasNames: [],
           hotkeyDisplay: '',
           isPinned: false,
@@ -988,6 +1024,7 @@ export function createKeySenderMock() {
       }
       state.importPreview = null;
       bumpNodes('imported', createdItems.map((i) => i.nodeId));
+      bumpCategories('updated', createdCategoryIds);
       return ok({ createdItems });
     },
 

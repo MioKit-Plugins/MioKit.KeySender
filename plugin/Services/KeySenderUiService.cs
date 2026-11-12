@@ -249,18 +249,10 @@ public sealed class KeySenderUiService : IDisposable
             throw new InvalidOperationException(picked.Message ?? picked.Code ?? "导出失败");
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
         try
         {
-            await using var stream = new FileStream(
-                picked.Path!,
-                FileMode.Create,
-                FileAccess.Write,
-                FileShare.None,
-                bufferSize: 4096,
-                options: FileOptions.Asynchronous);
-
-            var result = await _transfer.ExportAsync(ids, stream, cancellationToken).ConfigureAwait(false);
+            var result = await ExportFile.WriteAsync(_transfer, ids, picked.Path!, cancellationToken)
+                .ConfigureAwait(false);
             if (!result.Ok)
             {
                 throw new InvalidOperationException(
@@ -793,17 +785,45 @@ public sealed class KeySenderUiService : IDisposable
                 picked.Message ?? "已取消");
         }
 
+        return await PreviewImportFileAsync(request, picked.Path!).ConfigureAwait(false);
+    }
+
+    internal async Task<ApiResult<ImportPreviewDto>> PreviewImportFileAsync(UiSessionRequest request, string path)
+    {
         byte[] bytes;
+        int bytesRead;
         try
         {
-            bytes = await File.ReadAllBytesAsync(picked.Path!).ConfigureAwait(false);
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+                bufferSize: 1, options: FileOptions.Asynchronous | FileOptions.SequentialScan);
+            var length = stream.Length;
+            if (length > KeySenderConst.TransferMaxBytes)
+            {
+                return ImportFileTooLarge(request);
+            }
+
+            // One extra byte detects growth while keeping the read within the size limit plus one.
+            bytes = new byte[(int)length + 1];
+            bytesRead = await stream.ReadAtLeastAsync(bytes, bytes.Length, throwOnEndOfStream: false)
+                .ConfigureAwait(false);
+            if (bytesRead != length)
+            {
+                return bytesRead > KeySenderConst.TransferMaxBytes || stream.Length > KeySenderConst.TransferMaxBytes
+                    ? ImportFileTooLarge(request)
+                    : ApiResult<ImportPreviewDto>.Fail(ValidationCodes.ImportChanged, "文件在读取期间已更改，请重新导入。");
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return ApiResult<ImportPreviewDto>.Fail(ValidationCodes.FileAccessFailed, ex.Message);
         }
 
-        var result = _transfer.PreviewFromBytes(_activeSessionId!, bytes, picked.Path);
+        if (TrySessionError(request, allowBind: false, out var error))
+        {
+            return Fail<ImportPreviewDto>(error!);
+        }
+
+        var result = _transfer.PreviewFromBytes(request.WindowSessionId!.Trim(), bytes.AsSpan(0, bytesRead), path);
         if (!result.Ok || result.Preview is null)
         {
             return ApiResult<ImportPreviewDto>.Fail(
@@ -812,6 +832,18 @@ public sealed class KeySenderUiService : IDisposable
         }
 
         return ApiResult<ImportPreviewDto>.Success(MapImportPreview(result.Preview));
+    }
+
+    private ApiResult<ImportPreviewDto> ImportFileTooLarge(UiSessionRequest request)
+    {
+        if (TrySessionError(request, allowBind: false, out var error))
+        {
+            return Fail<ImportPreviewDto>(error!);
+        }
+
+        _transfer.ReleasePreview();
+        return ApiResult<ImportPreviewDto>.Fail(ValidationCodes.FileTooLarge,
+            $"导入文件不能超过 {KeySenderConst.TransferMaxBytes / (1024 * 1024)} MiB。");
     }
 
     public async Task<ApiResult<CommitImportResultDto>> CommitImportAsync(CommitImportRequest request)
@@ -833,26 +865,29 @@ public sealed class KeySenderUiService : IDisposable
                 request.PreviewId.Trim())
             .ConfigureAwait(false);
 
+        var createdIds = result.CreatedIds ?? [];
+        var createdCategoryIds = result.CreatedCategoryIds ?? [];
+        if (createdIds.Count > 0)
+        {
+            RaiseNodesChanged("imported", createdIds);
+        }
+
+        if (createdIds.Count > 0 || createdCategoryIds.Count > 0)
+        {
+            RaiseCategoriesChanged("updated", createdCategoryIds);
+        }
+
         if (!result.Ok)
         {
-            object? details = null;
-            if (result.Persisted)
-            {
-                details = new { persisted = true, createdIds = result.CreatedIds };
-            }
-
             return ApiResult<CommitImportResultDto>.Fail(
                 result.Code ?? ValidationCodes.PersistenceFailed,
                 result.Message,
-                details: details);
+                details: result.Persisted ? new { persisted = true, createdIds, createdCategoryIds } : null);
         }
 
         var items = (result.CreatedItems ?? [])
             .Select(ListItemFromDetail)
             .ToList();
-        var ids = items.Select(i => i.NodeId).ToList();
-        RaiseNodesChanged("imported", ids);
-        RaiseCategoriesChanged("updated", []);
         return ApiResult<CommitImportResultDto>.Success(new CommitImportResultDto { CreatedItems = items });
     }
 
@@ -893,6 +928,12 @@ public sealed class KeySenderUiService : IDisposable
                 ValidationCodes.RecordingBusy, "录制进行中不能导出");
         }
 
+        if (TransferService.ValidateExportCount(ids.Count) is { } invalidCount)
+        {
+            return ApiResult<ExportNodesResultDto>.Fail(
+                invalidCount.Code ?? ValidationCodes.ValidationFailed, invalidCount.Message);
+        }
+
         var picked = await PickSaveJsonAsync().ConfigureAwait(false);
         if (!picked.Ok)
         {
@@ -903,15 +944,7 @@ public sealed class KeySenderUiService : IDisposable
 
         try
         {
-            await using var stream = new FileStream(
-                picked.Path!,
-                FileMode.Create,
-                FileAccess.Write,
-                FileShare.None,
-                bufferSize: 4096,
-                options: FileOptions.Asynchronous);
-
-            var result = await _transfer.ExportAsync(ids, stream).ConfigureAwait(false);
+            var result = await ExportFile.WriteAsync(_transfer, ids, picked.Path!).ConfigureAwait(false);
             if (!result.Ok)
             {
                 return ApiResult<ExportNodesResultDto>.Fail(
@@ -1177,8 +1210,8 @@ public sealed class KeySenderUiService : IDisposable
             IsReadOnly = detail.IsReadOnly,
             CanEdit = detail.CanEdit,
             CanDelete = detail.CanDelete,
-            CategoryId = null,
-            CategoryName = null,
+            CategoryId = detail.CategoryId,
+            CategoryName = detail.CategoryName,
         };
 
     private static string FormatHotkey(KeySenderNode node)

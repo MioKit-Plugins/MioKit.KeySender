@@ -31,12 +31,6 @@ const draft = computed(() => store.draft);
 const readOnly = computed(() => store.draftReadOnly);
 const eventCount = computed(() => draft.value?.sequence?.events?.length ?? 0);
 
-const hardErrorSummary = computed(() =>
-  (store.draftErrors ?? []).map((e) => e.message).filter(Boolean).slice(0, 2).join('；'));
-
-const warningSummary = computed(() =>
-  (store.draftWarnings ?? []).map((w) => w.message).filter(Boolean).slice(0, 2).join('；'));
-
 const title = computed(() => {
   if (!draft.value) return '编辑节点';
   if (!draft.value.nodeId) return '新建节点';
@@ -67,8 +61,10 @@ const title = computed(() => {
                 编辑按键节点
               </SheetDescription>
             </div>
-            <Badge v-if="readOnly" variant="secondary">内置 · 只读</Badge>
-            <Badge v-else-if="store.isDirty" variant="outline">未保存</Badge>
+            <Badge v-if="readOnly" variant="secondary" class="shrink-0">内置 · 只读</Badge>
+            <Badge v-else variant="outline" class="shrink-0">
+              {{ store.isDirty ? '未保存' : '已保存' }}
+            </Badge>
           </div>
         </SheetHeader>
 
@@ -112,16 +108,6 @@ const title = computed(() => {
           </template>
         </div>
 
-        <div
-          v-if="hardErrorSummary || warningSummary"
-          class="shrink-0 border-b border-border px-5 py-2 text-xs leading-5"
-        >
-          <p v-if="hardErrorSummary" class="text-destructive">硬错误：{{ hardErrorSummary }}</p>
-          <p v-else class="text-warning-foreground dark:text-warning">
-            提示：{{ warningSummary }}
-          </p>
-        </div>
-
         <Tabs default-value="record" class="flex min-h-0 flex-1 flex-col gap-0">
           <div class="shrink-0 border-b border-border px-5 py-3">
             <TabsList class="grid w-full max-w-xs grid-cols-2">
@@ -140,7 +126,6 @@ const title = computed(() => {
                       id="sheet-node-name"
                       :model-value="draft.name"
                       :disabled="readOnly"
-                      maxlength="100"
                       @update:model-value="(v) => store.patchDraft({ name: v })"
                     />
                   </div>

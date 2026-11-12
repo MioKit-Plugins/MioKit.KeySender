@@ -34,7 +34,7 @@
 | 工程 | `MioKit.KeySender.slnx`；包引用 MioKit.* **1.3.1**；`minSdkVersion`/`minHostVersion` **1.3.0** |
 | 桥接 | `[JsService("KeySenderUiService")]`，方法见 `vue-ui/src/api/key-sender.js` 的 `METHOD_NAMES` |
 | 管理页 | 分类侧栏 + 节点表 + `NodeEditSheet`（录制 / 详细）；Mock：`pnpm dev` |
-| 单元测试 | `dotnet test` Release：**93 passed** |
+| 自动化测试 | C# 逻辑与桥接、JavaScript 状态与消息协议、Chromium 页面交互；见[运行命令](../README.md#开发验证) |
 | 宿主真机 | Hook / SendInput / 焦点 / 文件框 / 启停泄漏等仍需手工验收 |
 | nupkg | 可本地 pack；正式发布签字未完成 |
 
@@ -52,6 +52,7 @@
 4. [WebView2 界面与桥接契约](04-WebView2界面与桥接契约.md)：DTO、方法、警告确认和事件同步。
 5. [导入导出格式与持久化](05-导入导出格式与持久化.md)：JSON、预览确认、事务和恢复。
 6. [实施步骤与验收测试](06-实施步骤与验收测试.md)：阶段状态、测试项与交付条件。
+7. [代码审查与测试覆盖](07-代码审查与测试覆盖.md)：当前缺陷、自动化范围和真机检查。
 
 产品行为以第 01 篇为准，数据以第 02 篇为准，输入执行以第 03 篇为准，桥接以第 04 篇为准，交换文件以第 05 篇为准。实现笔记记录与设计的刻意差异；修订设计时须同步示例、验收与笔记。
 

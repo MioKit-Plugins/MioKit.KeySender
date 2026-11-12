@@ -1,18 +1,21 @@
 using System.Reflection;
-using Avalonia.Controls;
 using KeySender;
 using KeySender.Models;
 using KeySender.Services;
 using KeySender.Validation;
+using MioKit.KeySender.Tests.Fakes;
 using MioKit.Sdk;
 using Xunit;
 
 namespace MioKit.KeySender.Tests;
 
-[CollectionDefinition("Configuration persistence", DisableParallelization = true)]
-public sealed class ConfigurationPersistenceCollection;
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class ConfigurationPersistenceCollection
+{
+    public const string Name = "Configuration persistence";
+}
 
-[Collection("Configuration persistence")]
+[Collection(ConfigurationPersistenceCollection.Name)]
 public sealed class ConfigurationServicePersistenceTests
 {
     [Fact]
@@ -237,27 +240,4 @@ public sealed class ConfigurationServicePersistenceTests
         }
     }
 
-    private sealed class DesignModeScope : IDisposable
-    {
-        private readonly MethodInfo _setter;
-        private readonly bool _previous;
-
-        private DesignModeScope(MethodInfo setter, bool previous)
-        {
-            _setter = setter;
-            _previous = previous;
-        }
-
-        public static DesignModeScope Enter()
-        {
-            var property = typeof(Design).GetProperty(nameof(Design.IsDesignMode))!;
-            var setter = property.GetSetMethod(nonPublic: true)
-                ?? throw new InvalidOperationException("Design mode setter is unavailable.");
-            var scope = new DesignModeScope(setter, (bool)property.GetValue(null)!);
-            setter.Invoke(null, [true]);
-            return scope;
-        }
-
-        public void Dispose() => _setter.Invoke(null, [_previous]);
-    }
 }

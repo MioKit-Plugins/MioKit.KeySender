@@ -2,10 +2,12 @@ using KeySender.Services;
 
 namespace MioKit.KeySender.Tests.Fakes;
 
-/// <summary>Always reports the requested HWND as valid and foreground.</summary>
+/// <summary>Reports nonzero window handles as valid and can simulate focus denial.</summary>
 public sealed class FakeTargetWindowOps : ITargetWindowOps
 {
     public nint Foreground { get; set; } = 0x1000;
+
+    public bool AllowFocusChange { get; set; } = true;
 
     public bool IsWindow(nint hwnd) => hwnd != 0;
 
@@ -13,8 +15,11 @@ public sealed class FakeTargetWindowOps : ITargetWindowOps
 
     public bool SetForegroundWindow(nint hwnd)
     {
+        if (!AllowFocusChange || hwnd == 0)
+            return false;
+
         Foreground = hwnd;
-        return hwnd != 0;
+        return true;
     }
 
     public uint? GetWindowProcessId(nint hwnd) => hwnd == 0 ? null : 4242u;

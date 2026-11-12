@@ -2,6 +2,8 @@ using KeySender.Validation;
 
 namespace KeySender.Models;
 
+public sealed record CategorySnapshot(string Id, string Name, string Description);
+
 /// <summary>
 /// Backend result for ConfigurationService operations (UiService maps to bridge ApiResult later).
 /// </summary>
@@ -17,6 +19,8 @@ public sealed class ConfigurationResult
 
     public NodeDetail? Detail { get; init; }
 
+    public CategorySnapshot? Category { get; init; }
+
     public SequenceAnalysisResult? Analysis { get; init; }
 
     public bool Persisted { get; init; }
@@ -27,11 +31,17 @@ public sealed class ConfigurationResult
 
     public IReadOnlyList<string>? RemainingIds { get; init; }
 
-    public static ConfigurationResult Success(string? nodeId = null, NodeDetail? detail = null) => new()
+    public static ConfigurationResult Success(
+        string? nodeId = null,
+        NodeDetail? detail = null,
+        CategorySnapshot? category = null,
+        bool persisted = false) => new()
     {
         Ok = true,
         NodeId = nodeId,
         Detail = detail,
+        Category = category,
+        Persisted = persisted,
     };
 
     public static ConfigurationResult Fail(

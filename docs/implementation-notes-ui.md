@@ -40,8 +40,7 @@ Mock **不能**宣称 Hook / SendInput / 焦点恢复已验证。
 ## 4. 已知缺口
 
 - 搜索结果「查看 / 编辑」经 `RequestOpenNode` 打开管理窗并聚焦；「导出」走宿主无 session 导出
-- 管理页不编辑触发热键（列表仅显示 `hotkeyDisplay`；宿主 `HotKeyAction`）
+- 触发热键通过宿主 `HotKeyAction` 配置
 - 无 Runs / HeldKeys 可视化面板（API 已就绪）
 - 文件对话框过滤 `*.json`，非 `.miokeys`
-- 热键显示可能为原始序列化串，未做宿主美化格式
 - 模板附带的 `HotKeyCaptureJsService` / `BridgeTest` 不参与管理主路径
